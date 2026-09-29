@@ -167,7 +167,7 @@ query {
 }
 ```
 
-Subscribe to live updates (open this in GraphiQL, then send telemetry):
+Subscribe to live updates (open this in GraphiQL, then send telemetry). Each message is a list, here with one element:
 
 ```graphql
 subscription {
@@ -194,7 +194,7 @@ GraphiQL is served at the same URL. Subscriptions use WebSocket on the same path
 | `trackingStatus(aircraftId)` | query | Live tracking state for an ICAO hex, a callsign, or `*` |
 | `startTracking(aircraftId)` | mutation | Start live ADS-B tracking (ICAO hex, callsign or `*`) |
 | `stopTracking(aircraftId)` | mutation | Stop live ADS-B tracking |
-| `liveTelemetry(flightId)` | subscription | Positions as they are processed; `*` for every flight |
+| `liveTelemetry(flightId)` | subscription | List of the latest position of every matching flight (`*` = all), sent on subscribe and when positions change |
 
 Every operation, ready to paste into GraphiQL. Each has a name, so you can pick which one to run:
 
@@ -256,6 +256,21 @@ subscription LiveAll {
   liveTelemetry(flightId: "*") { flightId callsign latitude longitude altitude track }
 }
 ```
+
+- **`liveTelemetry` sends lists.** Each message is a snapshot: a list of the latest position of every matching flight, sorted by `flightId`. A single-flight subscription gets a list with 0 or 1 element.
+  - **On subscribe:** the current snapshot is sent right away, so a map can draw every aircraft without waiting for the next update.
+  - **When positions change:** a new snapshot is sent after a 0.5 s settle window, so one ADS-B poll becomes one message, and at most once per second.
+  - **Stale flights:** a flight with no new position for 5 minutes drops out of the list.
+  - **Scope:** the snapshot is kept in each API process's memory, so it's empty right after the API restarts. Use `telemetryHistory` for anything older.
+
+  Render straight from each message, for example with Apollo Client:
+
+  ```ts
+  const { data } = useSubscription(gql`
+    subscription { liveTelemetry(flightId: "*") { flightId callsign latitude longitude track } }
+  `);
+  const aircraft = data?.liveTelemetry ?? [];   // replace the previous markers with this list
+  ```
 
 - **IDs:** `liveTelemetry` and `telemetryHistory` take the flight ID. For ADS-B data that's the lowercase ICAO hex (`icaoHex`), even when tracking was started by callsign.
 - **Errors:** tracking operations return errors with `extensions.code` set to `ALREADY_TRACKING`, `NOT_TRACKING` or `PRODUCER_UNAVAILABLE`.
@@ -334,7 +349,7 @@ uv run pytest -m ""            # everything
   - the worker pipeline from queue to MongoDB and live publish
 - **End-to-end tests** cover:
   - navigation queries against the seeded stack database
-  - REST ingest reaching `liveTelemetry` (one flight and `*`) and `telemetryHistory` (including time windows)
+  - REST ingest reaching `liveTelemetry` snapshots (one flight and `*`, and the immediate snapshot for a late subscriber) and `telemetryHistory` (including time windows)
   - the full tracking lifecycle with its error codes
   - `trackableAircraft`, skipped if ADSB.lol has no snapshot yet
   - Each test uses a unique `E2E-...` flight ID. Set `E2E_ADMIN_TOKEN` (matching the stack's `ADMIN_TOKEN`) to delete that telemetry afterwards; otherwise the TTL removes it. Other settings: `E2E_API_URL`, `E2E_MONGODB_URI`, `E2E_MONGODB_DB`.
@@ -393,7 +408,7 @@ mutation Stop {
 **Track every aircraft in the area with `*`.** `startTracking(aircraftId: "*")`, `trackingStatus(aircraftId: "*")` and `stopTracking(aircraftId: "*")` work like any other ID; the REST paths accept `/*` as well.
 - `trackingStatus("*")` reports `aircraftCount`, the number of aircraft in the area on the last poll, and the total `publishedCount`.
 - `*` can be combined with specific IDs. Stopping `*` leaves specific aircraft tracked, and an aircraft covered by both is still published only once per new position.
-- Subscribe with `liveTelemetry(flightId: "*")` to receive every flight on one subscription.
+- Subscribe with `liveTelemetry(flightId: "*")` to receive every flight on one subscription. Each message is the full list of latest positions, one message per poll.
 
 ```graphql
 mutation StartAll { startTracking(aircraftId: "*") { aircraftId running } }

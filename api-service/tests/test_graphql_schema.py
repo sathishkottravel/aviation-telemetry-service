@@ -1,5 +1,6 @@
 """GraphQL schema tests with the service layer stubbed out (no MongoDB, RabbitMQ or producer needed)."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -112,16 +113,41 @@ async def test_producer_errors_carry_codes(monkeypatch, operation, service_fn, e
     assert result.errors[0].extensions == {"code": code}
 
 
-async def test_live_telemetry_subscription_streams_published_positions():
-    import asyncio
+def position(flight_id: str, altitude: float) -> Telemetry:
+    return Telemetry(flight_id=flight_id, timestamp=T0, latitude=0, longitude=0, altitude=altitude,
+                     ground_speed=0, track=0, vertical_rate=0)
 
-    from api_service.services.live_broadcaster import broadcaster
 
-    stream = await schema.subscribe('subscription { liveTelemetry(flightId: "SAS123") { flightId altitude } }')
-    first = asyncio.ensure_future(anext(stream))
+@pytest.fixture
+def live(monkeypatch):
+    """A fresh broadcaster for the schema, so cached positions don't leak between tests."""
+    from api_service.graphql import schema as schema_module
+    from api_service.services.live_broadcaster import LiveTelemetryBroadcaster
+
+    fresh = LiveTelemetryBroadcaster(min_emit_interval_s=0.01, settle_s=0.01)
+    monkeypatch.setattr(schema_module, "broadcaster", fresh)
+    return fresh
+
+
+async def test_live_telemetry_sends_lists_of_latest_positions(live):
+    live.publish(position("SAS123", 1000))
+    stream = await schema.subscribe('subscription { liveTelemetry(flightId: "*") { flightId altitude } }')
+    first = await asyncio.wait_for(anext(stream), 2)  # current snapshot on subscribe
+    assert first.data == {"liveTelemetry": [{"flightId": "SAS123", "altitude": 1000.0}]}
+
+    live.publish(position("4AB563", 7000))
+    live.publish(position("SAS123", 1234))
+    second = await asyncio.wait_for(anext(stream), 2)
+    assert second.data == {"liveTelemetry": [{"flightId": "4AB563", "altitude": 7000.0},
+                                             {"flightId": "SAS123", "altitude": 1234.0}]}
+    await stream.aclose()
+
+
+async def test_live_telemetry_single_flight_is_a_one_element_list(live):
+    stream = await schema.subscribe('subscription { liveTelemetry(flightId: "SAS123") { flightId } }')
+    pending = asyncio.ensure_future(anext(stream))
     await asyncio.sleep(0.05)
-    broadcaster.publish(Telemetry(flight_id="SAS123", timestamp=T0, latitude=0, longitude=0, altitude=1234,
-                                  ground_speed=0, track=0, vertical_rate=0))
-    result = await asyncio.wait_for(first, 2)
-    assert result.data == {"liveTelemetry": {"flightId": "SAS123", "altitude": 1234.0}}
+    live.publish(position("OTHER", 1))
+    live.publish(position("SAS123", 2))
+    assert (await asyncio.wait_for(pending, 2)).data == {"liveTelemetry": [{"flightId": "SAS123"}]}
     await stream.aclose()

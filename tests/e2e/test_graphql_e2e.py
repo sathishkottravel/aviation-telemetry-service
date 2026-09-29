@@ -7,7 +7,11 @@ import asyncio
 
 import pytest
 
-from .conftest import telemetry_payload
+from .conftest import ADMIN_TOKEN, telemetry_payload
+
+
+def _admin_headers() -> dict[str, str]:
+    return {"X-Admin-Token": ADMIN_TOKEN} if ADMIN_TOKEN else {}
 
 pytestmark = pytest.mark.e2e
 
@@ -35,7 +39,8 @@ async def test_ingest_reaches_live_subscription_and_history(api, gql, flight_id)
     async with gql.subscribe(subscription, {"id": flight_id}) as next_data:
         response = await api.post("/api/telemetry", json=telemetry_payload(flight_id))
         assert response.status_code == 202
-        assert await next_data() == {"liveTelemetry": {"flightId": flight_id, "callsign": "E2ETEST", "altitude": 3500.0}}
+        # A single-flight subscription gets a one-element list.
+        assert await next_data() == {"liveTelemetry": [{"flightId": flight_id, "callsign": "E2ETEST", "altitude": 3500.0}]}
 
     history = await gql.data("query($id: ID!) { telemetryHistory(flightId: $id) { flightId altitude timestamp } }",
                              {"id": flight_id})
@@ -59,15 +64,34 @@ async def test_history_time_window_and_order(api, gql, flight_id):
     assert window["telemetryHistory"] == [{"altitude": 1010.0}]
 
 
-async def test_wildcard_subscription_receives_every_flight(api, gql, flight_id):
-    async with gql.subscribe("subscription { liveTelemetry(flightId: \"*\") { flightId } }") as next_data:
-        await api.post("/api/telemetry", json=telemetry_payload(flight_id))
-        # Other traffic (e.g. ADS-B tracking) may interleave; wait for ours.
-        for _ in range(50):
-            if (await next_data())["liveTelemetry"]["flightId"] == flight_id:
+async def test_wildcard_subscription_lists_every_flight(api, gql, flight_id):
+    second = f"{flight_id}-B"
+    async with gql.subscribe("subscription { liveTelemetry(flightId: \"*\") { flightId altitude } }") as next_data:
+        await api.post("/api/telemetry", json=telemetry_payload(flight_id, altitude=1000))
+        await api.post("/api/telemetry", json=telemetry_payload(second, altitude=2000))
+        # Each message is a snapshot of every flight's latest position; other traffic may be in it too.
+        for _ in range(20):
+            snapshot = {p["flightId"]: p["altitude"] for p in (await next_data())["liveTelemetry"]}
+            if flight_id in snapshot and second in snapshot:
                 break
         else:
-            pytest.fail("wildcard subscriber never saw the test flight")
+            pytest.fail("wildcard snapshots never contained both test flights")
+    assert (snapshot[flight_id], snapshot[second]) == (1000, 2000)
+    await api.delete("/api/telemetry", params={"flight_id": second}, headers=_admin_headers())
+
+
+async def test_late_subscriber_gets_current_positions_immediately(api, gql, flight_id):
+    assert (await api.post("/api/telemetry", json=telemetry_payload(flight_id))).status_code == 202
+    subscription = "subscription($id: ID!) { liveTelemetry(flightId: $id) { flightId } }"
+    for _ in range(50):  # wait until the worker has processed it and the API has cached it
+        async with gql.subscribe(subscription, {"id": flight_id}) as next_data:
+            try:
+                snapshot = await next_data(timeout=0.5)
+            except TimeoutError:
+                continue
+        assert snapshot == {"liveTelemetry": [{"flightId": flight_id}]}
+        return
+    pytest.fail("a new subscriber never received the cached position")
 
 
 async def test_tracking_lifecycle(gql):
