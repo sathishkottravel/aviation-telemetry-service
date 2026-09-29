@@ -48,5 +48,23 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  producer:
+    build:
+      context: .
+      dockerfile: adsb-producer/Dockerfile
+    environment:
+      <<: *service-env
+      ADSB_POLL_INTERVAL: ${ADSB_POLL_INTERVAL:-5}
+      ADSB_LATITUDE: ${ADSB_LATITUDE:-59.3}
+      ADSB_LONGITUDE: ${ADSB_LONGITUDE:-18.0}
+      ADSB_RADIUS_NM: ${ADSB_RADIUS_NM:-100}
+      ADSB_PRODUCER_AIRCRAFT: ${ADSB_PRODUCER_AIRCRAFT:-}
+      ADSB_USER_AGENT: ${ADSB_USER_AGENT:-aviation-telemetry-service/0.1 (+https://github.com/sathishkottravel/aviation-telemetry-service)}
+    ports:
+      - "8001:8001"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   mongo-data:

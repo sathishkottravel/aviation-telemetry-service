@@ -1,3 +1,3 @@
 # uv workspace root. It holds no code; each member is an installable package.
 [tool.uv.workspace]
-members = ["shared", "api-service", "telemetry-worker"]
+members = ["shared", "api-service", "telemetry-worker", "adsb-producer"]

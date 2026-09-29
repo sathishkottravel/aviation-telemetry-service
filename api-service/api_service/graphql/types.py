@@ -56,6 +56,7 @@ class Telemetry:
     ground_speed: float
     track: float
     vertical_rate: float
+    callsign: str | None
 
     @classmethod
     def from_model(cls, model: models.Telemetry) -> Self:

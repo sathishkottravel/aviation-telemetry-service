@@ -18,6 +18,21 @@ class Settings(BaseSettings):
     rabbitmq_ingest_queue: str = "telemetry.ingest"
     rabbitmq_live_exchange: str = "telemetry.live"
 
+    adsb_base_url: str = "https://api.adsb.lol"
+    adsb_poll_interval: float = 5.0
+    adsb_latitude: float = 59.3
+    adsb_longitude: float = 18.0
+    adsb_radius_nm: float = 100.0
+    adsb_request_timeout: float = 10.0
+    # ADSB.lol rejects generic User-Agents (403) and asks for contact info.
+    adsb_user_agent: str = "aviation-telemetry-service/0.1 (+https://github.com/sathishkottravel/aviation-telemetry-service)"
+    adsb_producer_aircraft: str = ""
+    """Comma-separated ICAO hex codes or callsigns the producer tracks from startup."""
+
+    @property
+    def adsb_producer_aircraft_ids(self) -> list[str]:
+        return [a.strip().lower() for a in self.adsb_producer_aircraft.split(",") if a.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

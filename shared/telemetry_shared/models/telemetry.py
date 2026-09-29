@@ -14,3 +14,4 @@ class Telemetry(BaseModel):
     ground_speed: float = Field(ge=0, description="Ground speed in knots")
     track: float = Field(ge=0, lt=360, description="Track over ground in degrees true")
     vertical_rate: float = Field(description="Vertical rate in feet per minute")
+    callsign: str | None = None

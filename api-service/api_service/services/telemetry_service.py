@@ -16,7 +16,7 @@ async def submit(telemetry: Telemetry, rabbitmq: RabbitMQ) -> None:
     """Queue telemetry for the worker. Persistence and live fan-out happen after the worker processes it."""
     if not rabbitmq.is_connected:
         raise IngestUnavailableError
-    await rabbitmq.publish_ingest(telemetry.model_dump_json().encode())
+    await rabbitmq.publish_telemetry(telemetry)
 
 
 async def get_history(

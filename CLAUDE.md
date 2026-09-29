@@ -4,19 +4,24 @@ Preference for separate services not a single-app.
 Repository layout (uv workspace, Python 3.12)
 - api-service/       FastAPI + Strawberry GraphQL (package api_service), own pyproject.toml and Dockerfile
 - telemetry-worker/  RabbitMQ consumer (package telemetry_worker), own pyproject.toml and Dockerfile
-- shared/            telemetry_shared: config, models, database (MongoDB), messaging (RabbitMQ) used by both services
-- Controllers stay in api_service/api/controllers.py (REST) and api_service/graphql/schema.py (GraphQL); business logic goes in each service's services/ folder.
+- adsb-producer/     FastAPI service (package adsb_producer, port 8001) that polls ADSB.lol and owns the /ingestion/live/{start,stop,status}/{aircraft_id} controllers; own pyproject.toml and Dockerfile
+- shared/            telemetry_shared: config, models, database (MongoDB), messaging (RabbitMQ), adsb (ADSB.lol client + normalization) used by all services
+- Controllers stay in api_service/api/controllers.py (REST), api_service/graphql/schema.py (GraphQL) and adsb_producer/api/controllers.py; business logic goes in each service's services/ folder.
+- Every telemetry source publishes through RabbitMQ.publish_telemetry(); only the worker writes telemetry to MongoDB.
 - Dockerfiles are built from the repo root as context (docker build -f api-service/Dockerfile .) so shared/ is included.
 
 Commands
 - Install: uv sync --all-packages
 - API: uv run --package api-service uvicorn api_service.main:app --reload
 - Worker: uv run --package telemetry-worker telemetry-worker
+- Producer: uv run --package adsb-producer uvicorn adsb_producer.main:app --port 8001 --reload
+- Seed: uv run seed-db
 - Full stack: docker compose up --build
 
 Conventions
 - Do not add Claude attribution (Co-Authored-By, "Generated with Claude Code") to commits or PRs.
-- The API must keep starting when MongoDB or RabbitMQ is unavailable.
+- The API and producer must keep starting when MongoDB or RabbitMQ is unavailable.
+- ADSB.lol requires a descriptive User-Agent (ADSB_USER_AGENT) and rate-limits aggressively; keep one shared snapshot per poll interval.
 
 Backend skeleton
 Create a small Python FastAPI backend for an aviation flight-tracking demo. Keep the architecture simple and easy to maintain. Use Strawberry GraphQL with FastAPI. The backend should support one selected flight at a time and expose GraphQL queries for flight metadata, planned route, waypoints, and historical telemetry. Also prepare a GraphQL subscription for live telemetry updates. Use clear folder separation for API, models, services, messaging, and persistence, but avoid overengineering.

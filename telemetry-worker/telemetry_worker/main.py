@@ -13,21 +13,6 @@ from telemetry_worker.workers.telemetry_consumer import handle_message
 
 logger = logging.getLogger("telemetry_worker")
 
-MAX_RETRY_DELAY_S = 30
-
-
-async def connect_with_retry(rabbitmq: RabbitMQ) -> None:
-    delay = 1
-    while True:
-        try:
-            await rabbitmq.connect()
-            return
-        except Exception as exc:
-            logger.warning("RabbitMQ not reachable (%s); retrying in %ss", exc, delay)
-            await asyncio.sleep(delay)
-            delay = min(delay * 2, MAX_RETRY_DELAY_S)
-
-
 async def wait_for_shutdown() -> None:
     """Block until SIGTERM (docker stop). Ctrl+C is handled by asyncio.run cancelling the main task."""
     stop = asyncio.Event()
@@ -49,7 +34,7 @@ async def main() -> None:
         logger.warning("Could not ensure MongoDB indexes: %s", exc)
     rabbitmq = RabbitMQ(settings)
     try:
-        await connect_with_retry(rabbitmq)
+        await rabbitmq.connect_with_retry()
         await rabbitmq.consume_ingest(partial(handle_message, rabbitmq=rabbitmq))
         logger.info("Telemetry worker consuming from %s", settings.rabbitmq_ingest_queue)
         await wait_for_shutdown()

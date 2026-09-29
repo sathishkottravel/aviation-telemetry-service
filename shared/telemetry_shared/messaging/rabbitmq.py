@@ -1,21 +1,27 @@
-"""RabbitMQ topology shared by both services.
+"""RabbitMQ topology shared by all services.
 
     telemetry.ingest (direct) --telemetry.raw--> queue telemetry.ingest --> worker
     telemetry.live   (fanout) --> one temporary queue per API process   --> live subscribers
 """
 
+import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 
 import aio_pika
 from aio_pika.abc import AbstractChannel, AbstractExchange, AbstractIncomingMessage, AbstractRobustConnection
 
 from telemetry_shared.config import Settings
+from telemetry_shared.models import Telemetry
+
+logger = logging.getLogger(__name__)
 
 MessageHandler = Callable[[AbstractIncomingMessage], Awaitable[None]]
 
 INGEST_ROUTING_KEY = "telemetry.raw"
 # Live positions are only useful for a few seconds; drop anything older instead of replaying it.
 LIVE_MESSAGE_TTL_MS = 5000
+MAX_RETRY_DELAY_S = 30
 
 
 class RabbitMQ:
@@ -41,6 +47,18 @@ class RabbitMQ:
             await self.close()
             raise
 
+    async def connect_with_retry(self) -> None:
+        """Keep trying to connect, backing off up to MAX_RETRY_DELAY_S between attempts."""
+        delay = 1
+        while True:
+            try:
+                await self.connect()
+                return
+            except Exception as exc:
+                logger.warning("RabbitMQ not reachable (%s); retrying in %ss", exc, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, MAX_RETRY_DELAY_S)
+
     async def _declare_topology(self) -> None:
         self._channel = await self._require(self._connection).channel()
         await self._channel.set_qos(prefetch_count=50)
@@ -65,6 +83,10 @@ class RabbitMQ:
             body, content_type="application/json", delivery_mode=aio_pika.DeliveryMode.PERSISTENT
         )
         await self._require(self._ingest_exchange).publish(message, routing_key=INGEST_ROUTING_KEY)
+
+    async def publish_telemetry(self, telemetry: Telemetry) -> None:
+        """The single path every telemetry source (REST ingest, ADS-B producer) uses to enter the pipeline."""
+        await self.publish_ingest(telemetry.model_dump_json().encode())
 
     async def publish_live(self, body: bytes) -> None:
         message = aio_pika.Message(
