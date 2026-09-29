@@ -1,4 +1,4 @@
-from pymongo import AsyncMongoClient
+from pymongo import ASCENDING, AsyncMongoClient
 from pymongo.asynchronous.database import AsyncDatabase
 
 from telemetry_shared.config import get_settings
@@ -29,3 +29,13 @@ def get_db() -> AsyncDatabase:
     if _client is None:
         raise RuntimeError("MongoDB client is not initialised; call connect() first")
     return _client[get_settings().mongodb_db]
+
+
+async def ensure_indexes() -> None:
+    """Create indexes if missing. Safe to call repeatedly."""
+    db = get_db()
+    await db[AIRPORTS].create_index("icao", unique=True)
+    await db[WAYPOINTS].create_index("ident", unique=True)
+    await db[FLIGHTS].create_index("flight_id", unique=True)
+    # Serves telemetryHistory: equality on flight_id, range + sort on timestamp.
+    await db[TELEMETRY].create_index([("flight_id", ASCENDING), ("timestamp", ASCENDING)])

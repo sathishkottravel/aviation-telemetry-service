@@ -24,6 +24,7 @@ class Waypoint:
     ident: str
     latitude: float
     longitude: float
+    type: str | None
 
     @classmethod
     def from_model(cls, model: models.Waypoint) -> Self:

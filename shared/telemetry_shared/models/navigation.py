@@ -13,6 +13,8 @@ class Waypoint(BaseModel):
     ident: str
     latitude: float
     longitude: float
+    type: str | None = None
+    """For example "fix" or "VOR"."""
 
 
 class Flight(BaseModel):

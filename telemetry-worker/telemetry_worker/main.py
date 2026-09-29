@@ -4,6 +4,8 @@ import logging
 import signal
 from functools import partial
 
+from pymongo.errors import PyMongoError
+
 from telemetry_shared.config import get_settings
 from telemetry_shared.database import mongo
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
@@ -40,6 +42,11 @@ async def main() -> None:
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     mongo.connect()
+    try:
+        await mongo.ensure_indexes()
+    except PyMongoError as exc:
+        # The worker is the telemetry writer; it can still start and the index is created on a later run.
+        logger.warning("Could not ensure MongoDB indexes: %s", exc)
     rabbitmq = RabbitMQ(settings)
     try:
         await connect_with_retry(rabbitmq)

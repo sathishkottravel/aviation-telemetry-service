@@ -10,6 +10,9 @@ dependencies = [
     "pymongo>=4.13",
 ]
 
+[project.scripts]
+seed-db = "telemetry_shared.database.seed:run"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

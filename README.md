@@ -28,7 +28,16 @@ exchange telemetry.live (fanout) ──► temporary queue per api-service insta
                          in-memory broadcaster ──► GraphQL liveTelemetry(flightId)
 ```
 
-MongoDB collections: `airports`, `waypoints`, `flights`, `telemetry`.
+MongoDB collections and indexes:
+
+| Collection  | Fields                                                                                   | Index                              |
+| ----------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
+| `airports`  | `icao`, `name`, `latitude`, `longitude`, `elevation_ft`                                  | `icao` (unique)                    |
+| `waypoints` | `ident`, `latitude`, `longitude`, `type` (optional)                                      | `ident` (unique)                   |
+| `flights`   | `flight_id`, `callsign`, `origin`, `destination`, `route` (ordered waypoint idents)      | `flight_id` (unique)               |
+| `telemetry` | `flight_id`, `timestamp`, `latitude`, `longitude`, `altitude`, `ground_speed`, `track`, `vertical_rate` | `flight_id` + `timestamp` |
+
+The worker and the seed script create the indexes automatically.
 
 ## Project layout
 
@@ -82,6 +91,17 @@ uv run --package telemetry-worker telemetry-worker
 
 The API starts even when RabbitMQ is unreachable. In that case ingest returns 503 and live updates are off; `/health` shows the RabbitMQ state. The worker keeps retrying until RabbitMQ is up.
 
+## Seed demo data
+
+Adds airports ESSP and ESSA, four waypoints between them, and flight `SAS123` flying ESSP → ESSA. It's safe to run more than once, because documents are replaced by their key.
+
+```sh
+uv run seed-db                          # uses MONGODB_URI from .env (local or Atlas)
+docker compose run --rm worker seed-db  # against the compose MongoDB
+```
+
+The waypoint names and positions are made up for the demo; they are not real navigation data.
+
 ## Try it
 
 Send telemetry:
@@ -115,6 +135,5 @@ subscription {
 ## Status
 
 This is a skeleton. Still to come:
-- seed data (airports, waypoints, the ESSP → ESSA flight)
 - real telemetry normalization
 - optional ML anomaly scoring
