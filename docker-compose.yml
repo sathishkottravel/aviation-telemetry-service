@@ -1,0 +1,52 @@
+x-service-env: &service-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Defaults to the bundled mongo container. Set COMPOSE_MONGODB_URI in .env to use MongoDB Atlas instead.
+  MONGODB_URI: ${COMPOSE_MONGODB_URI:-mongodb://mongo:27017}
+  MONGODB_DB: ${MONGODB_DB:-aviation}
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: api-service/Dockerfile
+    environment: *service-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: telemetry-worker/Dockerfile
+    environment: *service-env
+    depends_on:
+      mongo:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
