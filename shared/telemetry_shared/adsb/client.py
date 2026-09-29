@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -25,50 +24,35 @@ class AdsbSnapshot:
 
 
 class AdsbLolClient:
-    """Area queries against the ADSB.lol v2 API.
+    """Area queries against the ADSB.lol v2 API. A 429 pauses requests with a growing back-off."""
 
-    Snapshots are cached for `max_age_s`, so any number of trackers polling the same area on the same
-    interval cost one upstream request per interval. A 429 pauses all requests (shared back-off) so
-    trackers don't keep hammering the API while it is limiting us.
-    """
-
-    def __init__(self, base_url: str, timeout_s: float, max_age_s: float, user_agent: str) -> None:
+    def __init__(self, base_url: str, timeout_s: float, user_agent: str) -> None:
         self._http = httpx.AsyncClient(base_url=base_url, timeout=timeout_s, headers={"User-Agent": user_agent})
-        self._max_age_s = max_age_s
-        self._lock = asyncio.Lock()
-        self._cache: dict[tuple[float, float, float], tuple[float, AdsbSnapshot]] = {}
         self._backoff_s = 0.0
         self._paused_until = 0.0
 
     async def fetch_area(self, lat: float, lon: float, radius_nm: float) -> AdsbSnapshot:
-        key = (lat, lon, radius_nm)
-        async with self._lock:
-            now = time.monotonic()
-            cached = self._cache.get(key)
-            # Slightly under the poll interval so trackers on the same interval always get a fresh snapshot.
-            if cached and now - cached[0] < self._max_age_s * 0.9:
-                return cached[1]
-            if now < self._paused_until:
-                raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {self._paused_until - now:.0f}s")
+        now = time.monotonic()
+        if now < self._paused_until:
+            raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {self._paused_until - now:.0f}s")
 
-            response = await self._http.get(f"/v2/point/{lat}/{lon}/{radius_nm:g}")
-            if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
-                self._backoff_s = min(max(self._backoff_s * 2, MIN_BACKOFF_S), MAX_BACKOFF_S)
-                pause = _retry_after_s(response) or self._backoff_s
-                self._paused_until = time.monotonic() + pause
-                logger.warning("ADSB.lol rate limited (429); pausing requests for %.0fs", pause)
-                raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {pause:.0f}s")
-            response.raise_for_status()
-            self._backoff_s = 0.0
+        response = await self._http.get(f"/v2/point/{lat}/{lon}/{radius_nm:g}")
+        if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
+            self._backoff_s = min(max(self._backoff_s * 2, MIN_BACKOFF_S), MAX_BACKOFF_S)
+            pause = _retry_after_s(response) or self._backoff_s
+            self._paused_until = time.monotonic() + pause
+            logger.warning("ADSB.lol rate limited (429); pausing requests for %.0fs", pause)
+            raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {pause:.0f}s")
+        response.raise_for_status()
+        self._backoff_s = 0.0
 
-            body = response.json()
-            snapshot = AdsbSnapshot(
-                now=datetime.fromtimestamp(body["now"] / 1000, tz=UTC),
-                aircraft=body.get("ac") or [],
-            )
-            logger.debug("Fetched %d aircraft from ADSB.lol", len(snapshot.aircraft))
-            self._cache[key] = (time.monotonic(), snapshot)
-            return snapshot
+        body = response.json()
+        snapshot = AdsbSnapshot(
+            now=datetime.fromtimestamp(body["now"] / 1000, tz=UTC),
+            aircraft=body.get("ac") or [],
+        )
+        logger.debug("Fetched %d aircraft from ADSB.lol", len(snapshot.aircraft))
+        return snapshot
 
     async def close(self) -> None:
         await self._http.aclose()

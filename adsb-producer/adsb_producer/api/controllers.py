@@ -33,7 +33,7 @@ async def start_live_ingestion(aircraft_id: str, request: Request) -> TrackingSt
 @router.post("/ingestion/live/stop/{aircraft_id}")
 async def stop_live_ingestion(aircraft_id: str, request: Request) -> TrackingStatus:
     try:
-        return await _tracking(request).stop(aircraft_id)
+        return _tracking(request).stop(aircraft_id)
     except NotTrackingError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Not tracking {exc}") from exc
 

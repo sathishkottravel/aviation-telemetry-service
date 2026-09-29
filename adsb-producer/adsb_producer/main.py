@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from adsb_producer.api.controllers import router
 from adsb_producer.services.tracking_service import AlreadyTrackingError, TrackingManager
 from telemetry_shared.adsb.client import AdsbLolClient
-from telemetry_shared.adsb.ingestion import AdsbIngestor
+from telemetry_shared.adsb.ingestion import AdsbAreaPoller
 from telemetry_shared.config import get_settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
 
@@ -31,17 +31,14 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    client = AdsbLolClient(
-        settings.adsb_base_url,
-        settings.adsb_request_timeout,
-        settings.adsb_poll_interval,
-        settings.adsb_user_agent,
-    )
+    client = AdsbLolClient(settings.adsb_base_url, settings.adsb_request_timeout, settings.adsb_user_agent)
     rabbitmq = RabbitMQ(settings)
-    tracking = TrackingManager(AdsbIngestor(client, rabbitmq, settings), rabbitmq)
+    tracking = TrackingManager(AdsbAreaPoller(client, rabbitmq, settings), rabbitmq)
     app.state.rabbitmq = rabbitmq
     app.state.tracking = tracking
 
+    # One poller for all aircraft; it makes no requests while nothing is tracked.
+    tracking.start_polling()
     # Connect in the background so the HTTP server is up (and /health answers) while RabbitMQ is still starting.
     startup = asyncio.create_task(connect_and_autostart(rabbitmq, tracking, settings.adsb_producer_aircraft_ids))
 
@@ -50,7 +47,7 @@ async def lifespan(app: FastAPI):
     startup.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await startup
-    await tracking.stop_all()
+    await tracking.stop_polling()
     await rabbitmq.close()
     await client.close()
 

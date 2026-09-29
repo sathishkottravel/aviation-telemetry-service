@@ -56,11 +56,11 @@ telemetry-worker/telemetry_worker/
 adsb-producer/adsb_producer/
   main.py                    app + startup/shutdown (connects RabbitMQ, starts ADSB_PRODUCER_AIRCRAFT)
   api/controllers.py         REST: /health, /ingestion/live/{start,stop,status}/{aircraft_id}
-  services/tracking_service.py   one polling task per tracked aircraft (in memory)
+  services/tracking_service.py   set of requested aircraft + the single area poller (in memory)
 shared/telemetry_shared/
   config.py  models/  database/  messaging/
-  adsb/client.py             ADSB.lol area query, shared snapshot cache, 429 back-off
-  adsb/ingestion.py          filter, normalize to Telemetry, publish to RabbitMQ
+  adsb/client.py             ADSB.lol area query, 429 back-off
+  adsb/ingestion.py          single area poller: fetch once, filter locally, normalize, publish
 ```
 
 ## Run with Docker
@@ -168,7 +168,7 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 | `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup |
 | `ADSB_USER_AGENT` | project name + repo URL | ADSB.lol rejects generic User-Agents with 403 |
 
-- **One request per interval.** All tracked aircraft share one ADSB.lol snapshot per interval, however many are tracked.
+- **One request per interval.** A single area poller fetches the area once per interval and picks out every requested aircraft locally, however many are tracked. Start and stop only change the set of requested IDs. Nothing is requested while the set is empty.
 - **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s.
 
 ## Status

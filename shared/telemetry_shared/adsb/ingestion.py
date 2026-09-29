@@ -23,11 +23,16 @@ def _first(raw: dict[str, Any], *keys: str) -> Any:
     return next((raw[k] for k in keys if raw.get(k) is not None), None)
 
 
-def matches(raw: dict[str, Any], aircraft_id: str) -> bool:
-    """True if aircraft_id is this record's ICAO hex or callsign (case-insensitive)."""
-    wanted = aircraft_id.strip().lower()
-    callsign = _callsign(raw)
-    return (raw.get("hex") or "").lower() == wanted or (callsign is not None and callsign.lower() == wanted)
+def index_by_id(aircraft: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Look up records by lowercase ICAO hex or callsign. A hex match wins over a callsign match."""
+    index: dict[str, dict[str, Any]] = {}
+    for raw in aircraft:
+        if callsign := _callsign(raw):
+            index.setdefault(callsign.lower(), raw)
+    for raw in aircraft:
+        if hex_id := (raw.get("hex") or "").lower():
+            index[hex_id] = raw
+    return index
 
 
 def normalize(raw: dict[str, Any], now: datetime) -> Telemetry | None:
@@ -69,8 +74,12 @@ class PollResult:
     telemetry: Telemetry | None = None
 
 
-class AdsbIngestor:
-    """Polls the configured area for one aircraft at a time and publishes new positions."""
+class AdsbAreaPoller:
+    """A single loop that fetches the configured area once per interval and publishes the requested aircraft.
+
+    The set of requested aircraft is read on every tick, so adding or removing an ID takes effect on the
+    next poll. No request is made while the set is empty.
+    """
 
     def __init__(self, client: AdsbLolClient, rabbitmq: RabbitMQ, settings: Settings) -> None:
         self._client = client
@@ -78,48 +87,54 @@ class AdsbIngestor:
         self._settings = settings
         self._last_published: dict[str, datetime] = {}
 
-    async def poll_once(self, aircraft_id: str) -> PollResult:
+    async def poll_once(self, aircraft_ids: set[str]) -> dict[str, PollResult]:
         snapshot = await self._client.fetch_area(
             self._settings.adsb_latitude, self._settings.adsb_longitude, self._settings.adsb_radius_nm
         )
-        telemetry = next(
-            (t for raw in snapshot.aircraft if matches(raw, aircraft_id) and (t := normalize(raw, snapshot.now))),
-            None,
-        )
-        if telemetry is None:
-            return PollResult(found=False, published=False)
+        by_id = index_by_id(snapshot.aircraft)
+        # Forget de-duplication state for aircraft that are no longer requested.
+        self._last_published = {k: v for k, v in self._last_published.items() if k in aircraft_ids}
 
-        # ADSB.lol repeats the last known position until a new one arrives; only publish real updates.
-        last = self._last_published.get(aircraft_id)
-        if last is not None and telemetry.timestamp <= last:
-            return PollResult(found=True, published=False, telemetry=telemetry)
+        results: dict[str, PollResult] = {}
+        for aircraft_id in aircraft_ids:
+            raw = by_id.get(aircraft_id)
+            telemetry = normalize(raw, snapshot.now) if raw else None
+            if telemetry is None:
+                results[aircraft_id] = PollResult(found=False, published=False)
+                continue
 
-        await self._rabbitmq.publish_telemetry(telemetry)
-        self._last_published[aircraft_id] = telemetry.timestamp
-        return PollResult(found=True, published=True, telemetry=telemetry)
+            # ADSB.lol repeats the last known position until a new one arrives; only publish real updates.
+            last = self._last_published.get(aircraft_id)
+            if last is not None and telemetry.timestamp <= last:
+                results[aircraft_id] = PollResult(found=True, published=False, telemetry=telemetry)
+                continue
+
+            await self._rabbitmq.publish_telemetry(telemetry)
+            self._last_published[aircraft_id] = telemetry.timestamp
+            results[aircraft_id] = PollResult(found=True, published=True, telemetry=telemetry)
+        return results
 
     async def run(
         self,
-        aircraft_id: str,
-        on_result: Callable[[PollResult], None] | None = None,
+        get_aircraft_ids: Callable[[], set[str]],
+        on_results: Callable[[dict[str, PollResult]], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
     ) -> None:
         """Poll until cancelled. A failed poll is reported and retried on the next interval."""
-        try:
-            while True:
+        while True:
+            aircraft_ids = get_aircraft_ids()
+            if aircraft_ids:
                 try:
-                    result = await self.poll_once(aircraft_id)
-                    if on_result:
-                        on_result(result)
+                    results = await self.poll_once(aircraft_ids)
+                    if on_results:
+                        on_results(results)
                 except AdsbRateLimitedError as exc:
-                    # The client already logged the 429 once; don't repeat it for every tracker.
-                    logger.debug("ADS-B poll for %s skipped: %s", aircraft_id, exc)
+                    # The client already logged the 429 when it started the pause.
+                    logger.debug("ADS-B poll skipped: %s", exc)
                     if on_error:
                         on_error(exc)
                 except Exception as exc:
-                    logger.warning("ADS-B poll for %s failed: %s", aircraft_id, exc)
+                    logger.warning("ADS-B poll failed: %s", exc)
                     if on_error:
                         on_error(exc)
-                await asyncio.sleep(self._settings.adsb_poll_interval)
-        finally:
-            self._last_published.pop(aircraft_id, None)
+            await asyncio.sleep(self._settings.adsb_poll_interval)
