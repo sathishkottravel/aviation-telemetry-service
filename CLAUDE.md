@@ -18,6 +18,7 @@ Commands
 - Producer: uv run --package adsb-producer uvicorn adsb_producer.main:app --port 8001 --reload
 - Seed: uv run seed-db
 - Full stack: docker compose up --build
+- Tests: uv run pytest (unit) | uv run pytest -m integration (needs mongo + rabbitmq) | uv run pytest -m e2e (needs full stack). Unit tests go in <service>/tests/, integration in tests/integration/, GraphQL e2e in tests/e2e/. Keep the README API reference in sync when adding GraphQL operations or REST endpoints.
 
 Conventions
 - Do not add Claude attribution (Co-Authored-By, "Generated with Claude Code") to commits or PRs.

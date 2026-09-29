@@ -43,12 +43,12 @@ async def prune_telemetry(
 ) -> dict[str, int | str | None]:
     """Prune telemetry on demand. At least one filter is required, so a bare call can't wipe the collection."""
     if before is not None and older_than_hours is not None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Use either before or older_than_hours, not both")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Use either before or older_than_hours, not both")
     if older_than_hours is not None:
         before = datetime.now(UTC) - timedelta(hours=older_than_hours)
     if flight_id is None and before is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "Give at least one of flight_id, before or older_than_hours"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Give at least one of flight_id, before or older_than_hours"
         )
     try:
         deleted = await telemetry_service.prune(flight_id, before)

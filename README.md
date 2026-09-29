@@ -89,6 +89,10 @@ shared/telemetry_shared/
   adsb/client.py             ADSB.lol area query, 429 back-off
   adsb/ingestion.py          single area poller: fetch once, filter locally, normalize, publish
   observability/tracing.py   optional OpenTelemetry setup, custom-span helpers, RabbitMQ context propagation
+<service>/tests/             unit tests per package (shared/tests, api-service/tests, ...)
+tests/integration/           integration tests (MongoDB + RabbitMQ)
+tests/e2e/                   end-to-end GraphQL tests (running stack)
+conftest.py                  test-wide settings isolation
 ```
 
 ## Run with Docker
@@ -172,6 +176,169 @@ subscription {
   }
 }
 ```
+
+## API reference
+
+### GraphQL: api-service, `http://localhost:8000/graphql`
+
+GraphiQL is served at the same URL. Subscriptions use WebSocket on the same path and support both the `graphql-transport-ws` and `graphql-ws` protocols (Apollo Client works with either).
+
+| Operation | Kind | Purpose |
+| --------- | ---- | ------- |
+| `flight(flightId)` | query | Flight metadata and planned route (waypoint idents) |
+| `route(flightId)` | query | The flight's waypoints, in flight order |
+| `airports` | query | All airports |
+| `waypoints` | query | All waypoints |
+| `telemetryHistory(flightId, start, end)` | query | Stored positions, oldest first; `start`/`end` optional |
+| `trackableAircraft` | query | Aircraft in the producer's ADS-B area, nearest first |
+| `trackingStatus(aircraftId)` | query | Live tracking state for an ICAO hex, a callsign, or `*` |
+| `startTracking(aircraftId)` | mutation | Start live ADS-B tracking (ICAO hex, callsign or `*`) |
+| `stopTracking(aircraftId)` | mutation | Stop live ADS-B tracking |
+| `liveTelemetry(flightId)` | subscription | Positions as they are processed; `*` for every flight |
+
+Every operation, ready to paste into GraphiQL. Each has a name, so you can pick which one to run:
+
+```graphql
+query Flight {
+  flight(flightId: "SAS123") { flightId callsign origin destination route }
+}
+
+query Route {
+  route(flightId: "SAS123") { ident latitude longitude type }
+}
+
+query Airports {
+  airports { icao name latitude longitude elevationFt }
+}
+
+query Waypoints {
+  waypoints { ident latitude longitude type }
+}
+
+query History {
+  telemetryHistory(flightId: "SAS123") {
+    flightId callsign timestamp latitude longitude altitude groundSpeed track verticalRate
+  }
+}
+
+query HistoryWindow {
+  telemetryHistory(flightId: "SAS123", start: "2026-09-29T10:00:00Z", end: "2026-09-29T10:30:00Z") {
+    timestamp latitude longitude altitude
+  }
+}
+
+query TrackableAircraft {
+  trackableAircraft {
+    fetchedAt latitude longitude radiusNm
+    aircraft { icaoHex callsign latitude longitude altitude groundSpeed track distanceNm tracked }
+  }
+}
+
+query TrackingStatus {
+  trackingStatus(aircraftId: "SAS87C") {
+    aircraftId icaoHex running startedAt lastPollAt inArea aircraftCount lastPositionAt publishedCount lastError
+  }
+}
+
+mutation StartTracking {
+  startTracking(aircraftId: "SAS87C") { aircraftId icaoHex running startedAt }
+}
+
+mutation StopTracking {
+  stopTracking(aircraftId: "SAS87C") { aircraftId icaoHex running publishedCount }
+}
+
+subscription LiveFlight {
+  liveTelemetry(flightId: "4ab562") { flightId callsign timestamp latitude longitude altitude groundSpeed track verticalRate }
+}
+
+subscription LiveAll {
+  liveTelemetry(flightId: "*") { flightId callsign latitude longitude altitude track }
+}
+```
+
+- **IDs:** `liveTelemetry` and `telemetryHistory` take the flight ID. For ADS-B data that's the lowercase ICAO hex (`icaoHex`), even when tracking was started by callsign.
+- **Errors:** tracking operations return errors with `extensions.code` set to `ALREADY_TRACKING`, `NOT_TRACKING` or `PRODUCER_UNAVAILABLE`.
+
+### REST endpoints
+
+**api-service** (`http://localhost:8000`, OpenAPI docs at `/docs`)
+
+| Method | Path | Purpose | Responses |
+| ------ | ---- | ------- | --------- |
+| `GET` | `/health` | Liveness, and whether RabbitMQ is connected | 200 |
+| `POST` | `/api/telemetry` | Ingest one telemetry record; it is published to RabbitMQ, not written directly | 202, 422 invalid, 503 RabbitMQ down |
+| `DELETE` | `/api/telemetry?flight_id=&before=&older_than_hours=` | Prune telemetry; needs `X-Admin-Token` | 200 `{"deleted": n}`, 401, 403 disabled, 422, 503 |
+| `POST` / `GET` / WebSocket | `/graphql` | GraphQL (see above) and GraphiQL | 200 |
+
+**adsb-producer** (`http://localhost:8001`, OpenAPI docs at `/docs`)
+
+| Method | Path | Purpose | Responses |
+| ------ | ---- | ------- | --------- |
+| `GET` | `/health` | Liveness, and whether RabbitMQ is connected | 200 |
+| `GET` | `/ingestion/live/aircraft` | Aircraft in the configured area, nearest first, with a `tracked` flag | 200, 503 no snapshot yet |
+| `POST` | `/ingestion/live/start/{aircraft_id}` | Start tracking (ICAO hex, callsign or `*`) | 202, 409 already tracked, 503 RabbitMQ down |
+| `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
+| `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
+
+**telemetry-worker** has no HTTP interface. It only consumes the `telemetry.ingest` RabbitMQ queue.
+
+Example requests:
+
+```sh
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/api/telemetry -H "Content-Type: application/json" \
+  -d '{"flight_id":"SAS123","timestamp":"2026-09-29T10:00:00Z","latitude":59.35,"longitude":17.94,"altitude":3500,"ground_speed":210,"track":45,"vertical_rate":1200}'
+curl -X DELETE "http://localhost:8000/api/telemetry?older_than_hours=6" -H "X-Admin-Token: $ADMIN_TOKEN"
+
+curl http://localhost:8001/ingestion/live/aircraft
+curl -X POST http://localhost:8001/ingestion/live/start/4ab562
+curl http://localhost:8001/ingestion/live/status/4ab562
+curl -X POST http://localhost:8001/ingestion/live/stop/4ab562
+```
+
+## Testing
+
+Tests are split into three layers. By default only the unit tests run.
+
+| Layer | Where | Needs | Run |
+| ----- | ----- | ----- | --- |
+| Unit | `<service>/tests/` | nothing; fakes stand in for MongoDB, RabbitMQ, ADSB.lol and the producer | `uv run pytest` |
+| Integration | `tests/integration/` | MongoDB and RabbitMQ: `docker compose up -d mongo rabbitmq` | `uv run pytest -m integration` |
+| End-to-end GraphQL | `tests/e2e/` | the full stack: `docker compose up` | `uv run pytest -m e2e` |
+
+```sh
+uv sync --all-packages         # installs pytest via the dev dependency group
+uv run pytest                  # unit
+uv run pytest -m integration   # integration
+uv run pytest -m e2e           # end-to-end
+uv run pytest -m ""            # everything
+```
+
+- **Unit tests** cover:
+  - ADS-B normalization, filtering, `*` handling and de-duplication
+  - the ADSB.lol client's 429 back-off
+  - trace-context propagation
+  - the live broadcaster
+  - REST controllers, including admin-token checks
+  - every GraphQL operation and error code, with services stubbed
+  - the producer client's error mapping
+  - worker ack/drop/reject behaviour
+  - the producer's tracking state and REST endpoints
+- **Integration tests** use the `aviation_test` database (dropped afterwards) and `test.*` exchanges and queues, so they never touch the stack's data or feed its worker. They cover:
+  - indexes, including creating, changing and dropping the TTL index
+  - seed idempotency
+  - history ordering and time ranges, and pruning
+  - message headers (source and `traceparent`)
+  - live fan-out to multiple API instances
+  - the worker pipeline from queue to MongoDB and live publish
+- **End-to-end tests** cover:
+  - navigation queries against the seeded stack database
+  - REST ingest reaching `liveTelemetry` (one flight and `*`) and `telemetryHistory` (including time windows)
+  - the full tracking lifecycle with its error codes
+  - `trackableAircraft`, skipped if ADSB.lol has no snapshot yet
+  - Each test uses a unique `E2E-...` flight ID. Set `E2E_ADMIN_TOKEN` (matching the stack's `ADMIN_TOKEN`) to delete that telemetry afterwards; otherwise the TTL removes it. Other settings: `E2E_API_URL`, `E2E_MONGODB_URI`, `E2E_MONGODB_DB`.
+- **Skipping:** integration and end-to-end tests skip themselves when their services aren't reachable.
 
 ## Live ADS-B ingestion
 
