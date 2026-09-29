@@ -4,6 +4,9 @@ from collections.abc import AsyncIterator
 
 from telemetry_shared.models import Telemetry
 
+ALL_FLIGHTS = "*"
+"""Subscribing with this flight ID receives telemetry for every flight."""
+
 SUBSCRIBER_BUFFER_SIZE = 100
 
 
@@ -25,7 +28,8 @@ class LiveTelemetryBroadcaster:
                 del self._subscribers[flight_id]
 
     def publish(self, telemetry: Telemetry) -> None:
-        for queue in list(self._subscribers.get(telemetry.flight_id, ())):
+        queues = [*self._subscribers.get(telemetry.flight_id, ()), *self._subscribers.get(ALL_FLIGHTS, ())]
+        for queue in queues:
             if queue.full():
                 # A slow client should see the newest position, not a backlog.
                 queue.get_nowait()

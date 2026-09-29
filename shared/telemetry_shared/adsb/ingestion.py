@@ -15,6 +15,11 @@ from telemetry_shared.models import AreaAircraft, Telemetry
 
 logger = logging.getLogger(__name__)
 
+ALL_AIRCRAFT = "*"
+"""Wildcard aircraft ID: every aircraft in the configured area."""
+# How long to remember an aircraft's last published position for de-duplication after it drops out of view.
+DEDUP_RETENTION = timedelta(minutes=10)
+
 
 def _callsign(raw: dict[str, Any]) -> str | None:
     return (raw.get("flight") or "").strip() or None
@@ -90,11 +95,16 @@ def list_area_aircraft(snapshot: AdsbSnapshot) -> list[AreaAircraft]:
 
 @dataclass
 class PollResult:
-    found: bool
-    """The aircraft was in the ADSB.lol snapshot with a usable position."""
-    published: bool
-    """A new position was published (False when the position had not changed since the last poll)."""
+    matched: int
+    """Aircraft with a usable position that this ID covered: 0 or 1, or the number in the area for '*'."""
+    published: int
+    """New positions published for this ID (positions unchanged since the last poll are skipped)."""
     telemetry: Telemetry | None = None
+    """Latest position for a single-aircraft ID; None for '*'."""
+
+    @property
+    def found(self) -> bool:
+        return self.matched > 0
 
 
 class AdsbAreaPoller:
@@ -140,28 +150,38 @@ class AdsbAreaPoller:
 
     async def poll_once(self, aircraft_ids: set[str]) -> dict[str, PollResult]:
         snapshot = await self._fetch()
-        by_id = index_by_id(snapshot.aircraft)
-        # Forget de-duplication state for aircraft that are no longer requested.
-        self._last_published = {k: v for k, v in self._last_published.items() if k in aircraft_ids}
 
-        results: dict[str, PollResult] = {}
-        for aircraft_id in aircraft_ids:
+        matched: dict[str, list[Telemetry]] = {}
+        if ALL_AIRCRAFT in aircraft_ids:
+            matched[ALL_AIRCRAFT] = [t for raw in snapshot.aircraft if (t := normalize(raw, snapshot.now))]
+        by_id = index_by_id(snapshot.aircraft)
+        for aircraft_id in aircraft_ids - {ALL_AIRCRAFT}:
             raw = by_id.get(aircraft_id)
             telemetry = normalize(raw, snapshot.now) if raw else None
-            if telemetry is None:
-                results[aircraft_id] = PollResult(found=False, published=False)
-                continue
+            matched[aircraft_id] = [telemetry] if telemetry else []
 
+        # Publish each aircraft once per poll, even when several IDs cover it (e.g. '*' and its callsign).
+        newly_published: set[str] = set()
+        for flight_id, telemetry in {t.flight_id: t for ts in matched.values() for t in ts}.items():
             # ADSB.lol repeats the last known position until a new one arrives; only publish real updates.
-            last = self._last_published.get(aircraft_id)
+            last = self._last_published.get(flight_id)
             if last is not None and telemetry.timestamp <= last:
-                results[aircraft_id] = PollResult(found=True, published=False, telemetry=telemetry)
                 continue
-
             await self._rabbitmq.publish_telemetry(telemetry)
-            self._last_published[aircraft_id] = telemetry.timestamp
-            results[aircraft_id] = PollResult(found=True, published=True, telemetry=telemetry)
-        return results
+            self._last_published[flight_id] = telemetry.timestamp
+            newly_published.add(flight_id)
+
+        cutoff = snapshot.now - DEDUP_RETENTION
+        self._last_published = {k: v for k, v in self._last_published.items() if v > cutoff}
+
+        return {
+            aircraft_id: PollResult(
+                matched=len(ts),
+                published=sum(t.flight_id in newly_published for t in ts),
+                telemetry=ts[0] if ts and aircraft_id != ALL_AIRCRAFT else None,
+            )
+            for aircraft_id, ts in matched.items()
+        }
 
     async def run(
         self,

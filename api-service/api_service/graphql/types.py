@@ -111,6 +111,7 @@ class TrackingStatus:
     started_at: datetime | None
     last_poll_at: datetime | None
     in_area: bool | None
+    aircraft_count: int | None
     last_position_at: datetime | None
     published_count: int
     last_error: str | None

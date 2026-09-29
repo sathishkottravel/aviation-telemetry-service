@@ -54,7 +54,7 @@ class Query:
         except ProducerUnavailableError as exc:
             raise _producer_error(exc) from exc
 
-    @strawberry.field(description="Live tracking state for an aircraft (ICAO hex or callsign).")
+    @strawberry.field(description="Live tracking state for an aircraft (ICAO hex or callsign), or '*' for the whole area.")
     async def tracking_status(self, aircraft_id: strawberry.ID) -> TrackingStatus:
         try:
             return TrackingStatus.from_model(await adsb_service.tracking_status(aircraft_id))
@@ -64,14 +64,14 @@ class Query:
 
 @strawberry.type
 class Mutation:
-    @strawberry.mutation(description="Start live ADS-B tracking for an aircraft (ICAO hex or callsign).")
+    @strawberry.mutation(description="Start live ADS-B tracking for an aircraft (ICAO hex or callsign), or '*' for every aircraft in the area.")
     async def start_tracking(self, aircraft_id: strawberry.ID) -> TrackingStatus:
         try:
             return TrackingStatus.from_model(await adsb_service.start_tracking(aircraft_id))
         except (AlreadyTrackingError, ProducerUnavailableError) as exc:
             raise _producer_error(exc) from exc
 
-    @strawberry.mutation(description="Stop live ADS-B tracking for an aircraft.")
+    @strawberry.mutation(description="Stop live ADS-B tracking for an aircraft, or '*' to stop area-wide tracking.")
     async def stop_tracking(self, aircraft_id: strawberry.ID) -> TrackingStatus:
         try:
             return TrackingStatus.from_model(await adsb_service.stop_tracking(aircraft_id))
@@ -81,7 +81,7 @@ class Mutation:
 
 @strawberry.type
 class Subscription:
-    @strawberry.subscription
+    @strawberry.subscription(description="Live positions for one flight (ICAO hex), or '*' for every flight.")
     async def live_telemetry(self, flight_id: strawberry.ID) -> AsyncGenerator[Telemetry, None]:
         async for telemetry in broadcaster.subscribe(flight_id):
             yield Telemetry.from_model(telemetry)

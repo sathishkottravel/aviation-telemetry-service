@@ -22,7 +22,7 @@ Commands
 Conventions
 - Do not add Claude attribution (Co-Authored-By, "Generated with Claude Code") to commits or PRs.
 - The API and producer must keep starting when MongoDB or RabbitMQ is unavailable.
-- ADSB.lol requires a descriptive User-Agent (ADSB_USER_AGENT) and rate-limits aggressively. Keep a single area poller: start/stop only change the set of requested aircraft IDs; never add per-aircraft polling loops.
+- ADSB.lol requires a descriptive User-Agent (ADSB_USER_AGENT) and rate-limits aggressively. Keep a single area poller: start/stop only change the set of requested aircraft IDs; never add per-aircraft polling loops. The ID '*' means every aircraft in the area (start/stop/status and liveTelemetry); de-duplicate publishing by ICAO hex so overlapping IDs publish once.
 
 Backend skeleton
 Create a small Python FastAPI backend for an aviation flight-tracking demo. Keep the architecture simple and easy to maintain. Use Strawberry GraphQL with FastAPI. The backend should support one selected flight at a time and expose GraphQL queries for flight metadata, planned route, waypoints, and historical telemetry. Also prepare a GraphQL subscription for live telemetry updates. Use clear folder separation for API, models, services, messaging, and persistence, but avoid overengineering.

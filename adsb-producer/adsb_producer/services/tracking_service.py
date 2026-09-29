@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from telemetry_shared.adsb.ingestion import AdsbAreaPoller, PollResult, list_area_aircraft
+from telemetry_shared.adsb.ingestion import ALL_AIRCRAFT, AdsbAreaPoller, PollResult, list_area_aircraft
 from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
 from telemetry_shared.models import AreaAircraftList, TrackingStatus
@@ -31,6 +31,7 @@ class _TrackedAircraft:
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_poll_at: datetime | None = None
     in_area: bool | None = None
+    aircraft_count: int | None = None
     last_position_at: datetime | None = None
     published_count: int = 0
     last_error: str | None = None
@@ -39,11 +40,11 @@ class _TrackedAircraft:
         self.last_poll_at = polled_at
         self.last_error = None
         self.in_area = result.found
+        self.aircraft_count = result.matched
         if result.telemetry is not None:
             self.icao_hex = result.telemetry.flight_id
             self.last_position_at = result.telemetry.timestamp
-        if result.published:
-            self.published_count += 1
+        self.published_count += result.published
 
     def record_error(self, message: str, polled_at: datetime) -> None:
         self.last_poll_at = polled_at
@@ -57,6 +58,7 @@ class _TrackedAircraft:
             started_at=self.started_at,
             last_poll_at=self.last_poll_at,
             in_area=self.in_area,
+            aircraft_count=self.aircraft_count,
             last_position_at=self.last_position_at,
             published_count=self.published_count,
             last_error=self.last_error,
@@ -65,6 +67,9 @@ class _TrackedAircraft:
 
 class TrackingManager:
     """The set of requested aircraft plus one area poller that serves all of them.
+
+    The ID '*' requests every aircraft in the area. It is tracked, stopped and reported like any other ID
+    and can coexist with specific IDs; an aircraft covered by both is still published once per poll.
 
     Start and stop only add or remove IDs; the poller picks up the current set on its next tick, fetches
     the area once, and filters locally. Nothing is persisted; a restart forgets the set.
@@ -120,7 +125,11 @@ class TrackingManager:
         snapshot = await self._poller.latest_snapshot()
         aircraft = list_area_aircraft(snapshot)
         for a in aircraft:
-            a.tracked = a.icao_hex in self._tracked or (a.callsign or "").lower() in self._tracked
+            a.tracked = (
+                ALL_AIRCRAFT in self._tracked
+                or a.icao_hex in self._tracked
+                or (a.callsign or "").lower() in self._tracked
+            )
         return AreaAircraftList(
             fetched_at=snapshot.now,
             latitude=self._settings.adsb_latitude,

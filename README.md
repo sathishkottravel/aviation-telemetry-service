@@ -194,6 +194,20 @@ mutation Stop {
 
 `aircraftId` can be an ICAO hex code or a callsign. `liveTelemetry` and `telemetryHistory` always need the ICAO hex. That's `icaoHex` in `trackableAircraft`, and in `trackingStatus` once the aircraft has been found; a hex ID is resolved immediately, a callsign after the first poll.
 
+**Track every aircraft in the area with `*`.** `startTracking(aircraftId: "*")`, `trackingStatus(aircraftId: "*")` and `stopTracking(aircraftId: "*")` work like any other ID; the REST paths accept `/*` as well.
+- `trackingStatus("*")` reports `aircraftCount`, the number of aircraft in the area on the last poll, and the total `publishedCount`.
+- `*` can be combined with specific IDs. Stopping `*` leaves specific aircraft tracked, and an aircraft covered by both is still published only once per new position.
+- Subscribe with `liveTelemetry(flightId: "*")` to receive every flight on one subscription.
+
+```graphql
+mutation StartAll { startTracking(aircraftId: "*") { aircraftId running } }
+subscription LiveAll { liveTelemetry(flightId: "*") { flightId callsign latitude longitude altitude track } }
+query StatusAll { trackingStatus(aircraftId: "*") { running aircraftCount publishedCount lastError } }
+mutation StopAll { stopTracking(aircraftId: "*") { running publishedCount } }
+```
+
+Tracking the whole area still costs one ADSB.lol request per interval, but it writes every aircraft's positions to MongoDB. Around Stockholm that was about 20 aircraft per poll, roughly 170,000 documents per day at a 10 s interval.
+
 Errors carry `extensions.code`:
 
 | Code | When |
@@ -221,7 +235,7 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 | `ADSB_POLL_INTERVAL` | `5` | Seconds between polls |
 | `ADSB_LATITUDE`, `ADSB_LONGITUDE` | `59.3`, `18.0` | Centre of the polled area |
 | `ADSB_RADIUS_NM` | `100` | Radius of the polled area in nautical miles |
-| `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup |
+| `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup (`*` = whole area) |
 | `ADSB_USER_AGENT` | project name + repo URL | ADSB.lol rejects generic User-Agents with 403 |
 | `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer (`trackableAircraft`, tracking mutations) |
 
