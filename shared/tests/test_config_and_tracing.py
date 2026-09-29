@@ -1,16 +1,49 @@
 from datetime import UTC, datetime
 
+import pytest
 from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GrpcExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HttpExporter
 from opentelemetry.sdk.trace import TracerProvider
 
 from telemetry_shared.config import get_settings
 from telemetry_shared.models import Telemetry
 from telemetry_shared.observability.tracing import (
+    _build_exporter,
     extract_context,
     inject_headers,
     setup_tracing,
     telemetry_attributes,
 )
+
+
+class TestExporterSelection:
+    def test_grpc_is_the_default(self, set_settings):
+        set_settings(otel_exporter_otlp_endpoint="http://jaeger:4317")
+        exporter, endpoint = _build_exporter(get_settings())
+        assert isinstance(exporter, GrpcExporter)
+        assert endpoint == "http://jaeger:4317"
+
+    @pytest.mark.parametrize("configured", [
+        "https://otlp-gateway.example/otlp",
+        "https://otlp-gateway.example/otlp/",
+        "https://otlp-gateway.example/otlp/v1/traces",
+    ])
+    def test_http_protocol_targets_the_traces_path_once(self, set_settings, configured):
+        set_settings(otel_exporter_otlp_protocol="http/protobuf", otel_exporter_otlp_endpoint=configured)
+        exporter, endpoint = _build_exporter(get_settings())
+        assert isinstance(exporter, HttpExporter)
+        assert endpoint == exporter._endpoint == "https://otlp-gateway.example/otlp/v1/traces"
+
+    def test_http_exporter_sends_url_encoded_auth_header_from_env(self, set_settings, monkeypatch):
+        # Grafana Cloud style: Basic auth, with the space URL-encoded as %20.
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Basic%20dXNlcjp0b2tlbg==")
+        set_settings(otel_exporter_otlp_protocol="http/protobuf", otel_exporter_otlp_endpoint="https://x.example/otlp")
+        exporter, _ = _build_exporter(get_settings())
+        headers = getattr(getattr(exporter, "_client", None), "_headers", None)
+        if headers is None:
+            pytest.skip("exporter internals changed; header parsing is covered by the SDK")
+        assert headers["authorization"] == "Basic dXNlcjp0b2tlbg=="
 
 
 def test_producer_aircraft_ids_are_trimmed_lowercased_and_skip_blanks(set_settings):

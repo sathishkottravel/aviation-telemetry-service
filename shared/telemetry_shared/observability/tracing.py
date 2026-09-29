@@ -9,13 +9,16 @@ Never put connection strings, credentials or tokens into span attributes.
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry import propagate, trace
 from opentelemetry.context import Context
 
-from telemetry_shared.config import get_settings
+from telemetry_shared.config import Settings, get_settings
 from telemetry_shared.models import Telemetry
+
+if TYPE_CHECKING:
+    from opentelemetry.sdk.trace.export import SpanExporter
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +34,15 @@ def setup_tracing(default_service_name: str) -> bool:
     if not settings.otel_enabled:
         return False
     try:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
         from opentelemetry.instrumentation.pymongo import PymongoInstrumentor
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        endpoint = settings.otel_exporter_otlp_endpoint
         service_name = settings.otel_service_name or default_service_name
         provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
-        exporter = OTLPSpanExporter(
-            endpoint=endpoint, insecure=endpoint.startswith("http://"), timeout=EXPORT_TIMEOUT_S
-        )
+        exporter, endpoint = _build_exporter(settings)
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
 
@@ -53,8 +52,30 @@ def setup_tracing(default_service_name: str) -> bool:
     except Exception:
         logger.warning("Tracing setup failed; continuing without tracing", exc_info=True)
         return False
-    logger.info("Tracing enabled: service %s exporting to %s", service_name, endpoint)
+    logger.info(
+        "Tracing enabled: service %s exporting to %s (%s)",
+        service_name, endpoint, settings.otel_exporter_otlp_protocol,
+    )
     return True
+
+
+def _build_exporter(settings: Settings) -> tuple["SpanExporter", str]:
+    """The OTLP span exporter for the configured protocol, and the endpoint it sends to.
+
+    Auth headers are not passed here: both exporters read OTEL_EXPORTER_OTLP_HEADERS from the environment.
+    """
+    endpoint = settings.otel_exporter_otlp_endpoint
+    if settings.otel_exporter_otlp_protocol == "http/protobuf":
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HttpExporter
+
+        # An endpoint passed in code is used verbatim, so add the traces path to the base URL ourselves.
+        if not endpoint.rstrip("/").endswith("/v1/traces"):
+            endpoint = endpoint.rstrip("/") + "/v1/traces"
+        return HttpExporter(endpoint=endpoint, timeout=EXPORT_TIMEOUT_S), endpoint
+
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GrpcExporter
+
+    return GrpcExporter(endpoint=endpoint, insecure=endpoint.startswith("http://"), timeout=EXPORT_TIMEOUT_S), endpoint
 
 
 def shutdown_tracing() -> None:
