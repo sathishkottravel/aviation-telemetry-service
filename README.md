@@ -36,16 +36,43 @@ MongoDB collections and indexes:
 | `airports`  | `icao`, `name`, `latitude`, `longitude`, `elevation_ft`                                  | `icao` (unique)                    |
 | `waypoints` | `ident`, `latitude`, `longitude`, `type` (optional)                                      | `ident` (unique)                   |
 | `flights`   | `flight_id`, `callsign`, `origin`, `destination`, `route` (ordered waypoint idents)      | `flight_id` (unique)               |
-| `telemetry` | `flight_id`, `timestamp`, `latitude`, `longitude`, `altitude`, `ground_speed`, `track`, `vertical_rate`, `callsign` (optional) | `flight_id` + `timestamp` |
+| `telemetry` | `flight_id`, `timestamp`, `latitude`, `longitude`, `altitude`, `ground_speed`, `track`, `vertical_rate`, `callsign` (optional) | `flight_id` + `timestamp`; TTL on `timestamp` |
 
 The worker and the seed script create the indexes automatically.
+
+### Telemetry retention
+
+- **Automatic (TTL):** MongoDB deletes telemetry whose `timestamp` is older than `TELEMETRY_TTL_DAYS` (default `1`).
+  - The TTL monitor runs about once a minute.
+  - The worker applies the setting at startup, so restart it after changing the value.
+  - `0` turns expiry off and drops the TTL index.
+- **On demand:** `DELETE /api/telemetry` on the API. It needs the `X-Admin-Token` header to match `ADMIN_TOKEN`. When `ADMIN_TOKEN` is empty, the endpoint returns 403.
+
+```sh
+# older than 6 hours, for every flight
+curl -X DELETE "http://localhost:8000/api/telemetry?older_than_hours=6" -H "X-Admin-Token: $ADMIN_TOKEN"
+# one flight's whole history
+curl -X DELETE "http://localhost:8000/api/telemetry?flight_id=4ab562" -H "X-Admin-Token: $ADMIN_TOKEN"
+# one flight, before a point in time
+curl -X DELETE "http://localhost:8000/api/telemetry?flight_id=4ab562&before=2026-09-29T12:00:00Z" -H "X-Admin-Token: $ADMIN_TOKEN"
+# -> {"deleted": 42, "flight_id": "4ab562", "before": "..."}
+```
+
+At least one of `flight_id`, `before` or `older_than_hours` is required, so a bare call can't empty the collection. `before` and `older_than_hours` can't be combined.
+
+| Status | Meaning |
+| ------ | ------- |
+| 401 | Missing or wrong `X-Admin-Token` |
+| 403 | `ADMIN_TOKEN` isn't set, so pruning is disabled |
+| 422 | No filter, or both `before` and `older_than_hours` |
+| 503 | MongoDB unavailable |
 
 ## Project layout
 
 ```
 api-service/api_service/
   main.py                    app + startup/shutdown
-  api/controllers.py         REST: /health, POST /api/telemetry
+  api/controllers.py         REST: /health, POST /api/telemetry, DELETE /api/telemetry (admin prune)
   graphql/schema.py          GraphQL queries and subscription
   graphql/types.py           GraphQL types
   services/                  navigation, telemetry, live-broadcast and producer-client logic

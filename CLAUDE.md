@@ -22,6 +22,7 @@ Commands
 Conventions
 - Do not add Claude attribution (Co-Authored-By, "Generated with Claude Code") to commits or PRs.
 - The API and producer must keep starting when MongoDB or RabbitMQ is unavailable.
+- Telemetry retention: TTL index on telemetry.timestamp (TELEMETRY_TTL_DAYS, default 1, applied by ensure_indexes). On-demand pruning is DELETE /api/telemetry, guarded by X-Admin-Token == ADMIN_TOKEN (disabled when unset) and requiring at least one filter.
 - ADSB.lol requires a descriptive User-Agent (ADSB_USER_AGENT) and rate-limits aggressively. Keep a single area poller: start/stop only change the set of requested aircraft IDs; never add per-aircraft polling loops. The ID '*' means every aircraft in the area (start/stop/status and liveTelemetry); de-duplicate publishing by ICAO hex so overlapping IDs publish once.
 
 Backend skeleton

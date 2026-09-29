@@ -8,6 +8,8 @@ WAYPOINTS = "waypoints"
 FLIGHTS = "flights"
 TELEMETRY = "telemetry"
 
+TELEMETRY_TTL_INDEX = "telemetry_ttl"
+
 _client: AsyncMongoClient | None = None
 
 
@@ -39,3 +41,24 @@ async def ensure_indexes() -> None:
     await db[FLIGHTS].create_index("flight_id", unique=True)
     # Serves telemetryHistory: equality on flight_id, range + sort on timestamp.
     await db[TELEMETRY].create_index([("flight_id", ASCENDING), ("timestamp", ASCENDING)])
+    await _ensure_telemetry_ttl(db, get_settings().telemetry_ttl_days)
+
+
+async def _ensure_telemetry_ttl(db: AsyncDatabase, ttl_days: float) -> None:
+    """Keep the TTL index on telemetry.timestamp in line with TELEMETRY_TTL_DAYS (create, change or drop).
+
+    MongoDB's TTL monitor runs about once a minute, so expired documents disappear shortly after they expire.
+    """
+    collection = db[TELEMETRY]
+    existing = (await collection.index_information()).get(TELEMETRY_TTL_INDEX)
+    if ttl_days <= 0:
+        if existing is not None:
+            await collection.drop_index(TELEMETRY_TTL_INDEX)
+        return
+
+    seconds = int(ttl_days * 86400)
+    if existing is None:
+        await collection.create_index("timestamp", name=TELEMETRY_TTL_INDEX, expireAfterSeconds=seconds)
+    elif existing.get("expireAfterSeconds") != seconds:
+        # collMod changes the expiry in place; create_index would fail on the conflicting option.
+        await db.command("collMod", TELEMETRY, index={"name": TELEMETRY_TTL_INDEX, "expireAfterSeconds": seconds})

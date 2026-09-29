@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db: str = "aviation"
+    telemetry_ttl_days: float = 1.0
+    """MongoDB deletes telemetry older than this automatically (TTL index). 0 disables expiry."""
+
+    admin_token: str = ""
+    """Required in the X-Admin-Token header for admin endpoints (telemetry pruning). Empty disables them."""
 
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     rabbitmq_ingest_exchange: str = "telemetry.ingest"

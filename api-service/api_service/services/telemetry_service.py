@@ -35,6 +35,19 @@ async def get_history(
     return [Telemetry.model_validate(doc) async for doc in cursor]
 
 
+async def prune(flight_id: str | None = None, before: datetime | None = None) -> int:
+    """Delete telemetry matching the filters; returns how many documents were removed."""
+    query: dict = {}
+    if flight_id is not None:
+        query["flight_id"] = flight_id
+    if before is not None:
+        query["timestamp"] = {"$lt": before}
+    if not query:
+        raise ValueError("prune needs flight_id and/or before; refusing to delete all telemetry")
+    result = await get_db()[TELEMETRY].delete_many(query)
+    return result.deleted_count
+
+
 async def handle_live_message(message: AbstractIncomingMessage) -> None:
     """Consumer for the live exchange: hand each processed record to in-memory subscribers."""
     broadcaster.publish(Telemetry.model_validate_json(message.body))

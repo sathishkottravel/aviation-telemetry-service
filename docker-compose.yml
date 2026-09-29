@@ -3,6 +3,8 @@ x-service-env: &service-env
   # Defaults to the bundled mongo container. Set COMPOSE_MONGODB_URI in .env to use MongoDB Atlas instead.
   MONGODB_URI: ${COMPOSE_MONGODB_URI:-mongodb://mongo:27017}
   MONGODB_DB: ${MONGODB_DB:-aviation}
+  TELEMETRY_TTL_DAYS: ${TELEMETRY_TTL_DAYS:-1}
+  ADMIN_TOKEN: ${ADMIN_TOKEN:-}
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
 
 services:
