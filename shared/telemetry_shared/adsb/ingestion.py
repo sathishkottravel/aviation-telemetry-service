@@ -12,9 +12,11 @@ from telemetry_shared.adsb.client import AdsbLolClient, AdsbRateLimitedError, Ad
 from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
 from telemetry_shared.models import AreaAircraft, Telemetry
+from telemetry_shared.observability.tracing import tracer
 
 logger = logging.getLogger(__name__)
 
+ADSB_SOURCE = "adsb"
 ALL_AIRCRAFT = "*"
 """Wildcard aircraft ID: every aircraft in the configured area."""
 # How long to remember an aircraft's last published position for de-duplication after it drops out of view.
@@ -123,6 +125,7 @@ class AdsbAreaPoller:
         self._lock = asyncio.Lock()
         self._snapshot: AdsbSnapshot | None = None
         self._fetched_at = 0.0
+        self._published_last_poll = 0
 
     async def _fetch(self) -> AdsbSnapshot:
         async with self._lock:
@@ -167,10 +170,11 @@ class AdsbAreaPoller:
             last = self._last_published.get(flight_id)
             if last is not None and telemetry.timestamp <= last:
                 continue
-            await self._rabbitmq.publish_telemetry(telemetry)
+            await self._rabbitmq.publish_telemetry(telemetry, source=ADSB_SOURCE)
             self._last_published[flight_id] = telemetry.timestamp
             newly_published.add(flight_id)
 
+        self._published_last_poll = len(newly_published)
         cutoff = snapshot.now - DEDUP_RETENTION
         self._last_published = {k: v for k, v in self._last_published.items() if v > cutoff}
 
@@ -193,17 +197,33 @@ class AdsbAreaPoller:
         while True:
             aircraft_ids = get_aircraft_ids()
             if aircraft_ids:
-                try:
-                    results = await self.poll_once(aircraft_ids)
-                    if on_results:
-                        on_results(results)
-                except AdsbRateLimitedError as exc:
-                    # The client already logged the 429 when it started the pause.
-                    logger.debug("ADS-B poll skipped: %s", exc)
-                    if on_error:
-                        on_error(exc)
-                except Exception as exc:
-                    logger.warning("ADS-B poll failed: %s", exc)
-                    if on_error:
-                        on_error(exc)
+                # One trace per poll: the ADSB.lol request plus a publish (and downstream worker/API) branch
+                # for every aircraft with a new position.
+                with tracer.start_as_current_span(
+                    "adsb.poll",
+                    attributes={
+                        "telemetry.source": ADSB_SOURCE,
+                        "adsb.requested_ids": len(aircraft_ids),
+                        "adsb.all_aircraft": ALL_AIRCRAFT in aircraft_ids,
+                    },
+                ) as span:
+                    try:
+                        results = await self.poll_once(aircraft_ids)
+                        span.set_attributes({
+                            "adsb.aircraft_in_area": len(self._snapshot.aircraft) if self._snapshot else 0,
+                            "adsb.published": self._published_last_poll,
+                        })
+                        if on_results:
+                            on_results(results)
+                    except AdsbRateLimitedError as exc:
+                        # The client already logged the 429 when it started the pause.
+                        logger.debug("ADS-B poll skipped: %s", exc)
+                        span.set_attribute("adsb.rate_limited", True)
+                        if on_error:
+                            on_error(exc)
+                    except Exception as exc:
+                        logger.warning("ADS-B poll failed: %s", exc)
+                        span.record_exception(exc)
+                        if on_error:
+                            on_error(exc)
             await asyncio.sleep(self._settings.adsb_poll_interval)

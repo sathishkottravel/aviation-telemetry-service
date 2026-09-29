@@ -7,18 +7,27 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import aio_pika
 from aio_pika.abc import AbstractChannel, AbstractExchange, AbstractIncomingMessage, AbstractRobustConnection
+from opentelemetry.trace import SpanKind
 
 from telemetry_shared.config import Settings
 from telemetry_shared.models import Telemetry
+from telemetry_shared.observability.tracing import (
+    inject_headers,
+    messaging_attributes,
+    telemetry_attributes,
+    tracer,
+)
 
 logger = logging.getLogger(__name__)
 
 MessageHandler = Callable[[AbstractIncomingMessage], Awaitable[None]]
 
 INGEST_ROUTING_KEY = "telemetry.raw"
+SOURCE_HEADER = "telemetry-source"
 # Live positions are only useful for a few seconds; drop anything older instead of replaying it.
 LIVE_MESSAGE_TTL_MS = 5000
 MAX_RETRY_DELAY_S = 30
@@ -78,21 +87,38 @@ class RabbitMQ:
             await self._connection.close()
             self._connection = None
 
-    async def publish_ingest(self, body: bytes) -> None:
+    async def publish_ingest(self, body: bytes, headers: dict[str, Any] | None = None) -> None:
         message = aio_pika.Message(
-            body, content_type="application/json", delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+            body, content_type="application/json", delivery_mode=aio_pika.DeliveryMode.PERSISTENT, headers=headers
         )
         await self._require(self._ingest_exchange).publish(message, routing_key=INGEST_ROUTING_KEY)
 
-    async def publish_telemetry(self, telemetry: Telemetry) -> None:
-        """The single path every telemetry source (REST ingest, ADS-B producer) uses to enter the pipeline."""
-        await self.publish_ingest(telemetry.model_dump_json().encode())
+    async def publish_telemetry(self, telemetry: Telemetry, source: str) -> None:
+        """The single path every telemetry source (REST ingest, ADS-B producer) uses to enter the pipeline.
 
-    async def publish_live(self, body: bytes) -> None:
+        The trace context travels in the message headers, so the worker's spans join the publisher's trace.
+        """
+        exchange = self._settings.rabbitmq_ingest_exchange
+        attributes = {
+            **messaging_attributes(exchange, "publish", INGEST_ROUTING_KEY),
+            **telemetry_attributes(telemetry, source),
+        }
+        with tracer.start_as_current_span(f"{exchange} publish", kind=SpanKind.PRODUCER, attributes=attributes):
+            headers = inject_headers({SOURCE_HEADER: source})
+            await self.publish_ingest(telemetry.model_dump_json().encode(), headers)
+
+    async def publish_live(self, body: bytes, headers: dict[str, Any] | None = None) -> None:
         message = aio_pika.Message(
-            body, content_type="application/json", delivery_mode=aio_pika.DeliveryMode.NOT_PERSISTENT
+            body, content_type="application/json", delivery_mode=aio_pika.DeliveryMode.NOT_PERSISTENT, headers=headers
         )
         await self._require(self._live_exchange).publish(message, routing_key="")
+
+    async def publish_live_telemetry(self, telemetry: Telemetry) -> None:
+        """Worker side: fan a processed record out to every API instance, continuing the current trace."""
+        exchange = self._settings.rabbitmq_live_exchange
+        attributes = {**messaging_attributes(exchange, "publish"), **telemetry_attributes(telemetry)}
+        with tracer.start_as_current_span(f"{exchange} publish", kind=SpanKind.PRODUCER, attributes=attributes):
+            await self.publish_live(telemetry.model_dump_json().encode(), inject_headers())
 
     async def consume_ingest(self, handler: MessageHandler) -> None:
         """Worker side: consume the durable ingest queue. The handler must ack or reject each message."""

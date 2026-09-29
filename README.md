@@ -88,6 +88,7 @@ shared/telemetry_shared/
   config.py  models/  database/  messaging/
   adsb/client.py             ADSB.lol area query, 429 back-off
   adsb/ingestion.py          single area poller: fetch once, filter locally, normalize, publish
+  observability/tracing.py   optional OpenTelemetry setup, custom-span helpers, RabbitMQ context propagation
 ```
 
 ## Run with Docker
@@ -98,6 +99,7 @@ docker compose up --build
 
 - API and GraphiQL: http://localhost:8000/graphql
 - ADS-B producer: http://localhost:8001/docs
+- Jaeger (traces): http://localhost:16686
 - RabbitMQ management UI: http://localhost:15672 (guest / guest)
 
 To use MongoDB Atlas instead of the bundled container, set `COMPOSE_MONGODB_URI` in `.env`.
@@ -268,6 +270,42 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 
 - **One request per interval.** A single area poller fetches the area once per interval and picks out every requested aircraft locally, however many are tracked. Start and stop only change the set of requested IDs. Nothing is requested while the set is empty.
 - **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s.
+
+## Tracing (OpenTelemetry + Jaeger)
+
+All three services export traces over OTLP/gRPC. `docker compose up` includes Jaeger v2 all-in-one; open http://localhost:16686. Each process has its own service name: `flight-telemetry-api`, `flight-telemetry-worker` and `flight-telemetry-producer`.
+
+The trace context travels in the RabbitMQ message headers (W3C `traceparent`), so one telemetry record gives one trace across the services:
+
+```
+api       POST /api/telemetry                  (FastAPI, automatic)
+api         telemetry.submit                   telemetry.source=rest
+api           telemetry.ingest publish         producer span, injects traceparent
+worker          telemetry.ingest process       consumer span, parent from the message headers
+worker            telemetry.normalize
+worker            telemetry.persist
+worker              aviation.insert            (pymongo, automatic)
+worker            telemetry.live publish
+api                 graphql.live_update        graphql.subscribers = live subscribers reached
+```
+
+ADS-B data gives the same chain under a producer `adsb.poll` span, which also contains the ADSB.lol `GET` (httpx, automatic). There's one publish branch per aircraft with a new position. GraphQL requests get Strawberry spans for parsing, validation and each resolver. The API → producer calls behind `trackableAircraft` and the tracking mutations continue into the producer's spans.
+
+- **Attributes:** `flight.id`, `aircraft.id` (the ICAO hex for ADS-B), `aircraft.callsign`, `telemetry.timestamp`, `telemetry.source` (`rest`/`adsb`), `messaging.destination`, `messaging.operation`, plus `adsb.*` on polls.
+- **Finding traces:** in Jaeger, search by service and tag, e.g. `flight.id=4ab562`.
+- **Never recorded:**
+  - connection strings, credentials and request headers, so `X-Admin-Token` stays out
+  - MongoDB query documents; pymongo spans carry only the command name
+
+| Setting | Default | Meaning |
+| ------- | ------- | ------- |
+| `OTEL_ENABLED` | `false` (compose: `true`) | Turns tracing on. When off, the tracing code is a no-op |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` (compose: `http://jaeger:4317`) | OTLP/gRPC endpoint of a local or deployed Jaeger |
+| `OTEL_SERVICE_NAME` | per service | Overrides the service name |
+| `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT` | `true`, bundled Jaeger | The same settings for the compose containers |
+
+- **If Jaeger is unreachable,** the services keep working; spans are exported in the background and only exporter warnings are logged.
+- **Local `uv run` tracing:** run `docker compose up -d jaeger`, then set `OTEL_ENABLED=true` in `.env`.
 
 ## Status
 

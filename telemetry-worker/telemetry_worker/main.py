@@ -9,6 +9,7 @@ from pymongo.errors import PyMongoError
 from telemetry_shared.config import get_settings
 from telemetry_shared.database import mongo
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
+from telemetry_shared.observability.tracing import setup_tracing, shutdown_tracing
 from telemetry_worker.workers.telemetry_consumer import handle_message
 
 logger = logging.getLogger("telemetry_worker")
@@ -25,6 +26,8 @@ async def wait_for_shutdown() -> None:
 async def main() -> None:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # Before the MongoDB client exists: the pymongo instrumentation hooks into clients created afterwards.
+    setup_tracing("flight-telemetry-worker")
 
     mongo.connect()
     try:
@@ -41,6 +44,7 @@ async def main() -> None:
     finally:
         await rabbitmq.close()
         await mongo.close()
+        shutdown_tracing()
         logger.info("Telemetry worker stopped")
 
 

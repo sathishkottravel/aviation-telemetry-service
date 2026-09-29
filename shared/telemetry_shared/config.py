@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     rabbitmq_ingest_queue: str = "telemetry.ingest"
     rabbitmq_live_exchange: str = "telemetry.live"
 
+    otel_enabled: bool = False
+    otel_service_name: str | None = None
+    """Overrides the service's default name (flight-telemetry-api / -worker / -producer)."""
+    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+
     producer_url: str = "http://localhost:8001"
     """Where the API reaches the ADS-B producer (for listing trackable aircraft)."""
 

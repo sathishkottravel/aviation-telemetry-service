@@ -6,8 +6,19 @@ x-service-env: &service-env
   TELEMETRY_TTL_DAYS: ${TELEMETRY_TTL_DAYS:-1}
   ADMIN_TOKEN: ${ADMIN_TOKEN:-}
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  # Tracing to the bundled Jaeger. Set COMPOSE_OTEL_ENABLED=false in .env to turn it off in the containers.
+  OTEL_ENABLED: ${COMPOSE_OTEL_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
 
 services:
+  jaeger:
+    # Jaeger v2 all-in-one: OTLP receiver (4317 gRPC, 4318 HTTP), in-memory storage and the UI.
+    image: jaegertracing/jaeger:2.21.0
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+
   mongo:
     image: mongo:7
     ports:
@@ -32,6 +43,7 @@ services:
       dockerfile: api-service/Dockerfile
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-api
       PRODUCER_URL: http://producer:8001
     ports:
       - "8000:8000"
@@ -45,7 +57,9 @@ services:
     build:
       context: .
       dockerfile: telemetry-worker/Dockerfile
-    environment: *service-env
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-worker
     depends_on:
       mongo:
         condition: service_started
@@ -58,6 +72,7 @@ services:
       dockerfile: adsb-producer/Dockerfile
     environment:
       <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-producer
       ADSB_POLL_INTERVAL: ${ADSB_POLL_INTERVAL:-5}
       ADSB_LATITUDE: ${ADSB_LATITUDE:-59.3}
       ADSB_LONGITUDE: ${ADSB_LONGITUDE:-18.0}

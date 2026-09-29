@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 
 import strawberry
+from strawberry.extensions.tracing import OpenTelemetryExtension
 from graphql import GraphQLError
 
 from api_service.graphql.types import Airport, Flight, Telemetry, TrackableArea, TrackingStatus, Waypoint
@@ -87,4 +88,7 @@ class Subscription:
             yield Telemetry.from_model(telemetry)
 
 
-schema = strawberry.Schema(query=Query, mutation=Mutation, subscription=Subscription)
+# Spans for GraphQL parsing, validation and custom resolvers; a no-op when tracing is disabled.
+schema = strawberry.Schema(
+    query=Query, mutation=Mutation, subscription=Subscription, extensions=[OpenTelemetryExtension]
+)

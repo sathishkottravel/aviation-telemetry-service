@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from adsb_producer.api.controllers import router
 from adsb_producer.services.tracking_service import AlreadyTrackingError, TrackingManager
@@ -11,8 +12,13 @@ from telemetry_shared.adsb.client import AdsbLolClient
 from telemetry_shared.adsb.ingestion import AdsbAreaPoller
 from telemetry_shared.config import get_settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
+from telemetry_shared.observability.tracing import setup_tracing, shutdown_tracing
 
 logger = logging.getLogger("adsb_producer")
+
+logging.basicConfig(level=get_settings().log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# Before the ADSB.lol HTTP client exists: instrumentation hooks into clients created afterwards.
+tracing_enabled = setup_tracing("flight-telemetry-producer")
 
 
 async def connect_and_autostart(rabbitmq: RabbitMQ, tracking: TrackingManager, aircraft_ids: list[str]) -> None:
@@ -29,8 +35,6 @@ async def connect_and_autostart(rabbitmq: RabbitMQ, tracking: TrackingManager, a
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
     client = AdsbLolClient(settings.adsb_base_url, settings.adsb_request_timeout, settings.adsb_user_agent)
     rabbitmq = RabbitMQ(settings)
     tracking = TrackingManager(AdsbAreaPoller(client, rabbitmq, settings), rabbitmq, settings)
@@ -50,7 +54,11 @@ async def lifespan(app: FastAPI):
     await tracking.stop_polling()
     await rabbitmq.close()
     await client.close()
+    shutdown_tracing()
 
 
 app = FastAPI(title="ADS-B Producer", lifespan=lifespan)
 app.include_router(router)
+if tracing_enabled:
+    # Skip the per-message ASGI receive/send spans; the request span and our custom spans tell the story.
+    FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])

@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.115",
     "strawberry-graphql[fastapi]>=0.243",
     "uvicorn[standard]>=0.30",
+    "opentelemetry-instrumentation-fastapi>=0.51b0",
 ]
 
 [tool.uv.sources]

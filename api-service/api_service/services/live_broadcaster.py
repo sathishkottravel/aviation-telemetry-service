@@ -27,13 +27,15 @@ class LiveTelemetryBroadcaster:
             if not self._subscribers[flight_id]:
                 del self._subscribers[flight_id]
 
-    def publish(self, telemetry: Telemetry) -> None:
+    def publish(self, telemetry: Telemetry) -> int:
+        """Deliver to this flight's subscribers and '*' subscribers; returns how many received it."""
         queues = [*self._subscribers.get(telemetry.flight_id, ()), *self._subscribers.get(ALL_FLIGHTS, ())]
         for queue in queues:
             if queue.full():
                 # A slow client should see the newest position, not a backlog.
                 queue.get_nowait()
             queue.put_nowait(telemetry)
+        return len(queues)
 
 
 broadcaster = LiveTelemetryBroadcaster()
