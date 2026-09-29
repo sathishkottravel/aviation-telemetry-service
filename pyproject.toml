@@ -1,0 +1,22 @@
+# uv workspace root. It holds no code; each member is an installable package.
+[tool.uv.workspace]
+members = ["shared", "api-service", "telemetry-worker", "adsb-producer"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "websockets>=13",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["shared/tests", "api-service/tests", "telemetry-worker/tests", "adsb-producer/tests", "tests"]
+# importlib mode: every service has its own tests/ folder, so module names would otherwise collide.
+addopts = "--import-mode=importlib -m 'not integration and not e2e'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient` is deprecated"]
+markers = [
+    "integration: needs MongoDB and RabbitMQ (docker compose up -d mongo rabbitmq)",
+    "e2e: needs the full stack running (docker compose up)",
+]

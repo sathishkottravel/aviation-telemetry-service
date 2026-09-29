@@ -1,0 +1,21 @@
+[project]
+name = "telemetry-worker"
+version = "0.1.0"
+description = "RabbitMQ consumer that normalizes telemetry, stores it in MongoDB and publishes live updates"
+requires-python = ">=3.12"
+dependencies = [
+    "telemetry-shared",
+]
+
+[project.scripts]
+telemetry-worker = "telemetry_worker.main:run"
+
+[tool.uv.sources]
+telemetry-shared = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["telemetry_worker"]

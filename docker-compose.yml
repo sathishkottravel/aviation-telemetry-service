@@ -1,0 +1,89 @@
+x-service-env: &service-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Defaults to the bundled mongo container. Set COMPOSE_MONGODB_URI in .env to use MongoDB Atlas instead.
+  MONGODB_URI: ${COMPOSE_MONGODB_URI:-mongodb://mongo:27017}
+  MONGODB_DB: ${MONGODB_DB:-aviation}
+  TELEMETRY_TTL_DAYS: ${TELEMETRY_TTL_DAYS:-1}
+  ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  # Tracing to the bundled Jaeger. Set COMPOSE_OTEL_ENABLED=false in .env to turn it off in the containers.
+  OTEL_ENABLED: ${COMPOSE_OTEL_ENABLED:-true}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+
+services:
+  jaeger:
+    # Jaeger v2 all-in-one: OTLP receiver (4317 gRPC, 4318 HTTP), in-memory storage and the UI.
+    image: jaegertracing/jaeger:2.21.0
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: api-service/Dockerfile
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-api
+      PRODUCER_URL: http://producer:8001
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongo:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: telemetry-worker/Dockerfile
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-worker
+    depends_on:
+      mongo:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+  producer:
+    build:
+      context: .
+      dockerfile: adsb-producer/Dockerfile
+    environment:
+      <<: *service-env
+      OTEL_SERVICE_NAME: flight-telemetry-producer
+      ADSB_POLL_INTERVAL: ${ADSB_POLL_INTERVAL:-5}
+      ADSB_LATITUDE: ${ADSB_LATITUDE:-59.3}
+      ADSB_LONGITUDE: ${ADSB_LONGITUDE:-18.0}
+      ADSB_RADIUS_NM: ${ADSB_RADIUS_NM:-100}
+      ADSB_PRODUCER_AIRCRAFT: ${ADSB_PRODUCER_AIRCRAFT:-}
+      ADSB_USER_AGENT: ${ADSB_USER_AGENT:-aviation-telemetry-service/0.1 (+https://github.com/sathishkottravel/aviation-telemetry-service)}
+    ports:
+      - "8001:8001"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+volumes:
+  mongo-data:
