@@ -99,3 +99,22 @@ class TrackableArea:
             radius_nm=model.radius_nm,
             aircraft=[TrackableAircraft.from_model(a) for a in model.aircraft],
         )
+
+
+@strawberry.type
+class TrackingStatus:
+    """Live ADS-B tracking state for one aircraft. Use icaoHex as the flightId for liveTelemetry."""
+
+    aircraft_id: strawberry.ID
+    icao_hex: strawberry.ID | None
+    running: bool
+    started_at: datetime | None
+    last_poll_at: datetime | None
+    in_area: bool | None
+    last_position_at: datetime | None
+    published_count: int
+    last_error: str | None
+
+    @classmethod
+    def from_model(cls, model: models.TrackingStatus) -> Self:
+        return cls(**model.model_dump())

@@ -7,9 +7,8 @@ from adsb_producer.services.tracking_service import (
     IngestUnavailableError,
     NotTrackingError,
     TrackingManager,
-    TrackingStatus,
 )
-from telemetry_shared.models import AreaAircraftList
+from telemetry_shared.models import AreaAircraftList, TrackingStatus
 
 logger = logging.getLogger(__name__)
 

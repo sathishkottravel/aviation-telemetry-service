@@ -25,3 +25,18 @@ class AreaAircraftList(BaseModel):
     longitude: float
     radius_nm: float
     aircraft: list[AreaAircraft]
+
+
+class TrackingStatus(BaseModel):
+    aircraft_id: str
+    """The ID tracking was started with: ICAO hex or callsign, lowercased."""
+    icao_hex: str | None = None
+    """Resolved ICAO hex (use it as flightId for telemetry). None until the aircraft has been found."""
+    running: bool
+    started_at: datetime | None = None
+    last_poll_at: datetime | None = None
+    in_area: bool | None = None
+    """Whether the last poll found the aircraft inside the configured ADS-B area."""
+    last_position_at: datetime | None = None
+    published_count: int = 0
+    last_error: str | None = None

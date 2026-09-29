@@ -166,11 +166,49 @@ query TrackableAircraft {
 }
 ```
 
+### Track from GraphQL
+
+The whole flow works from the GraphQL playground (http://localhost:8000/graphql). The API forwards tracking calls to the producer, which owns the tracking state. Run the operations in order:
+
+```graphql
+query Area {
+  trackableAircraft { fetchedAt aircraft { icaoHex callsign distanceNm altitude tracked } }
+}
+
+mutation Start {
+  startTracking(aircraftId: "SAS87C") { aircraftId icaoHex running }
+}
+
+query Status {
+  trackingStatus(aircraftId: "SAS87C") { icaoHex running inArea lastPositionAt publishedCount lastError }
+}
+
+subscription Live {
+  liveTelemetry(flightId: "4ab562") { callsign timestamp latitude longitude altitude groundSpeed track }
+}
+
+mutation Stop {
+  stopTracking(aircraftId: "SAS87C") { icaoHex running publishedCount }
+}
+```
+
+`aircraftId` can be an ICAO hex code or a callsign. `liveTelemetry` and `telemetryHistory` always need the ICAO hex. That's `icaoHex` in `trackableAircraft`, and in `trackingStatus` once the aircraft has been found; a hex ID is resolved immediately, a callsign after the first poll.
+
+Errors carry `extensions.code`:
+
+| Code | When |
+| ---- | ---- |
+| `ALREADY_TRACKING` | `startTracking` for an aircraft that is already tracked |
+| `NOT_TRACKING` | `stopTracking` for an aircraft that isn't tracked |
+| `PRODUCER_UNAVAILABLE` | The producer can't be reached, or it can't publish because RabbitMQ is down |
+
+### Track over REST (producer)
+
 Track an aircraft by ICAO hex code or callsign (case-insensitive):
 
 ```sh
 curl -X POST http://localhost:8001/ingestion/live/start/4ab563   # 202; 409 if already tracked; 503 if RabbitMQ is down
-curl http://localhost:8001/ingestion/live/status/4ab563          # running, in_area, published_count, last_error, ...
+curl http://localhost:8001/ingestion/live/status/4ab563          # icao_hex, running, in_area, published_count, last_error, ...
 curl -X POST http://localhost:8001/ingestion/live/stop/4ab563    # 200; 404 if not tracked
 ```
 
@@ -185,7 +223,7 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 | `ADSB_RADIUS_NM` | `100` | Radius of the polled area in nautical miles |
 | `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup |
 | `ADSB_USER_AGENT` | project name + repo URL | ADSB.lol rejects generic User-Agents with 403 |
-| `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer for `trackableAircraft` |
+| `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer (`trackableAircraft`, tracking mutations) |
 
 - **One request per interval.** A single area poller fetches the area once per interval and picks out every requested aircraft locally, however many are tracked. Start and stop only change the set of requested IDs. Nothing is requested while the set is empty.
 - **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s.

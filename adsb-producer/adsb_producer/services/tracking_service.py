@@ -1,14 +1,15 @@
 import asyncio
 import contextlib
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-
-from pydantic import BaseModel
 
 from telemetry_shared.adsb.ingestion import AdsbAreaPoller, PollResult, list_area_aircraft
 from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
-from telemetry_shared.models import AreaAircraftList
+from telemetry_shared.models import AreaAircraftList, TrackingStatus
+
+_ICAO_HEX = re.compile(r"[0-9a-f]{6}")
 
 
 class AlreadyTrackingError(Exception):
@@ -23,21 +24,10 @@ class IngestUnavailableError(Exception):
     """RabbitMQ is not connected, so polled telemetry would have nowhere to go."""
 
 
-class TrackingStatus(BaseModel):
-    aircraft_id: str
-    running: bool
-    started_at: datetime | None = None
-    last_poll_at: datetime | None = None
-    in_area: bool | None = None
-    """Whether the last poll found the aircraft inside the configured ADS-B area."""
-    last_position_at: datetime | None = None
-    published_count: int = 0
-    last_error: str | None = None
-
-
 @dataclass
 class _TrackedAircraft:
     aircraft_id: str
+    icao_hex: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     last_poll_at: datetime | None = None
     in_area: bool | None = None
@@ -50,6 +40,7 @@ class _TrackedAircraft:
         self.last_error = None
         self.in_area = result.found
         if result.telemetry is not None:
+            self.icao_hex = result.telemetry.flight_id
             self.last_position_at = result.telemetry.timestamp
         if result.published:
             self.published_count += 1
@@ -61,6 +52,7 @@ class _TrackedAircraft:
     def status(self, running: bool) -> TrackingStatus:
         return TrackingStatus(
             aircraft_id=self.aircraft_id,
+            icao_hex=self.icao_hex,
             running=running,
             started_at=self.started_at,
             last_poll_at=self.last_poll_at,
@@ -108,7 +100,8 @@ class TrackingManager:
             raise AlreadyTrackingError(key)
         if not self._rabbitmq.is_connected:
             raise IngestUnavailableError
-        tracked = self._tracked[key] = _TrackedAircraft(key)
+        # A hex ID is already resolved; a callsign resolves when the poller first finds the aircraft.
+        tracked = self._tracked[key] = _TrackedAircraft(key, icao_hex=key if _ICAO_HEX.fullmatch(key) else None)
         return tracked.status(running=True)
 
     def stop(self, aircraft_id: str) -> TrackingStatus:
