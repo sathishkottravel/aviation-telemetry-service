@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
 
     client = AdsbLolClient(settings.adsb_base_url, settings.adsb_request_timeout, settings.adsb_user_agent)
     rabbitmq = RabbitMQ(settings)
-    tracking = TrackingManager(AdsbAreaPoller(client, rabbitmq, settings), rabbitmq)
+    tracking = TrackingManager(AdsbAreaPoller(client, rabbitmq, settings), rabbitmq, settings)
     app.state.rabbitmq = rabbitmq
     app.state.tracking = tracking
 

@@ -3,8 +3,9 @@ from datetime import datetime
 
 import strawberry
 
-from api_service.graphql.types import Airport, Flight, Telemetry, Waypoint
-from api_service.services import navigation_service, telemetry_service
+from api_service.graphql.types import Airport, Flight, Telemetry, TrackableArea, Waypoint
+from api_service.services import adsb_service, navigation_service, telemetry_service
+from api_service.services.adsb_service import ProducerUnavailableError
 from api_service.services.live_broadcaster import broadcaster
 
 
@@ -33,6 +34,13 @@ class Query:
     ) -> list[Telemetry]:
         history = await telemetry_service.get_history(flight_id, start, end)
         return [Telemetry.from_model(t) for t in history]
+
+    @strawberry.field(description="Aircraft in the ADS-B producer's area that can be tracked, nearest first.")
+    async def trackable_aircraft(self) -> TrackableArea:
+        try:
+            return TrackableArea.from_model(await adsb_service.list_trackable_aircraft())
+        except ProducerUnavailableError as exc:
+            raise Exception(f"ADS-B producer unavailable: {exc}") from exc
 
 
 @strawberry.type

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     rabbitmq_ingest_queue: str = "telemetry.ingest"
     rabbitmq_live_exchange: str = "telemetry.live"
 
+    producer_url: str = "http://localhost:8001"
+    """Where the API reaches the ADS-B producer (for listing trackable aircraft)."""
+
     adsb_base_url: str = "https://api.adsb.lol"
     adsb_poll_interval: float = 5.0
     adsb_latitude: float = 59.3

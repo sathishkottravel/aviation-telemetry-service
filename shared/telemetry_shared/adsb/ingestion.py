@@ -2,15 +2,16 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from telemetry_shared.adsb.client import AdsbLolClient, AdsbRateLimitedError
+from telemetry_shared.adsb.client import AdsbLolClient, AdsbRateLimitedError, AdsbSnapshot
 from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
-from telemetry_shared.models import Telemetry
+from telemetry_shared.models import AreaAircraft, Telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,28 @@ def normalize(raw: dict[str, Any], now: datetime) -> Telemetry | None:
     )
 
 
+def list_area_aircraft(snapshot: AdsbSnapshot) -> list[AreaAircraft]:
+    """Aircraft in the snapshot that tracking could publish (same rules as normalize()), nearest first."""
+    aircraft = []
+    for raw in snapshot.aircraft:
+        telemetry = normalize(raw, snapshot.now)
+        if telemetry is None or not raw.get("hex"):
+            continue
+        aircraft.append(
+            AreaAircraft(
+                icao_hex=telemetry.flight_id,
+                callsign=telemetry.callsign,
+                latitude=telemetry.latitude,
+                longitude=telemetry.longitude,
+                altitude=telemetry.altitude,
+                ground_speed=telemetry.ground_speed,
+                track=telemetry.track,
+                distance_nm=raw.get("dst"),
+            )
+        )
+    return sorted(aircraft, key=lambda a: (a.distance_nm is None, a.distance_nm))
+
+
 @dataclass
 class PollResult:
     found: bool
@@ -78,7 +101,8 @@ class AdsbAreaPoller:
     """A single loop that fetches the configured area once per interval and publishes the requested aircraft.
 
     The set of requested aircraft is read on every tick, so adding or removing an ID takes effect on the
-    next poll. No request is made while the set is empty.
+    next poll. No request is made while the set is empty. The last snapshot is kept so the area can be
+    listed without extra upstream requests.
     """
 
     def __init__(self, client: AdsbLolClient, rabbitmq: RabbitMQ, settings: Settings) -> None:
@@ -86,11 +110,36 @@ class AdsbAreaPoller:
         self._rabbitmq = rabbitmq
         self._settings = settings
         self._last_published: dict[str, datetime] = {}
+        self._lock = asyncio.Lock()
+        self._snapshot: AdsbSnapshot | None = None
+        self._fetched_at = 0.0
+
+    async def _fetch(self) -> AdsbSnapshot:
+        async with self._lock:
+            snapshot = await self._client.fetch_area(
+                self._settings.adsb_latitude, self._settings.adsb_longitude, self._settings.adsb_radius_nm
+            )
+            self._snapshot, self._fetched_at = snapshot, time.monotonic()
+            return snapshot
+
+    async def latest_snapshot(self) -> AdsbSnapshot:
+        """The latest area snapshot, fetching only if the poller hasn't refreshed it recently.
+
+        If a fetch fails (rate limited, upstream down) an older snapshot is returned when there is one.
+        """
+        # 1.5x: a poll cycle takes the interval plus request time, so a running poller always counts as fresh.
+        max_age_s = self._settings.adsb_poll_interval * 1.5
+        if self._snapshot is not None and time.monotonic() - self._fetched_at < max_age_s:
+            return self._snapshot
+        try:
+            return await self._fetch()
+        except Exception:
+            if self._snapshot is None:
+                raise
+            return self._snapshot
 
     async def poll_once(self, aircraft_ids: set[str]) -> dict[str, PollResult]:
-        snapshot = await self._client.fetch_area(
-            self._settings.adsb_latitude, self._settings.adsb_longitude, self._settings.adsb_radius_nm
-        )
+        snapshot = await self._fetch()
         by_id = index_by_id(snapshot.aircraft)
         # Forget de-duplication state for aircraft that are no longer requested.
         self._last_published = {k: v for k, v in self._last_published.items() if k in aircraft_ids}

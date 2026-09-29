@@ -8,6 +8,7 @@ Repository layout (uv workspace, Python 3.12)
 - shared/            telemetry_shared: config, models, database (MongoDB), messaging (RabbitMQ), adsb (ADSB.lol client + normalization) used by all services
 - Controllers stay in api_service/api/controllers.py (REST), api_service/graphql/schema.py (GraphQL) and adsb_producer/api/controllers.py; business logic goes in each service's services/ folder.
 - Every telemetry source publishes through RabbitMQ.publish_telemetry(); only the worker writes telemetry to MongoDB.
+- The API reads the producer over HTTP via PRODUCER_URL (trackableAircraft query); it must keep working when the producer is down.
 - Dockerfiles are built from the repo root as context (docker build -f api-service/Dockerfile .) so shared/ is included.
 
 Commands

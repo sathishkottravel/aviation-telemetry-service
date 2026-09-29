@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
-from telemetry_shared.adsb.ingestion import AdsbAreaPoller, PollResult
+from telemetry_shared.adsb.ingestion import AdsbAreaPoller, PollResult, list_area_aircraft
+from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
+from telemetry_shared.models import AreaAircraftList
 
 
 class AlreadyTrackingError(Exception):
@@ -76,9 +78,10 @@ class TrackingManager:
     the area once, and filters locally. Nothing is persisted; a restart forgets the set.
     """
 
-    def __init__(self, poller: AdsbAreaPoller, rabbitmq: RabbitMQ) -> None:
+    def __init__(self, poller: AdsbAreaPoller, rabbitmq: RabbitMQ, settings: Settings) -> None:
         self._poller = poller
         self._rabbitmq = rabbitmq
+        self._settings = settings
         self._tracked: dict[str, _TrackedAircraft] = {}
         self._task: asyncio.Task | None = None
 
@@ -118,6 +121,20 @@ class TrackingManager:
         key = _normalize_id(aircraft_id)
         tracked = self._tracked.get(key)
         return tracked.status(running=True) if tracked else TrackingStatus(aircraft_id=key, running=False)
+
+    async def list_area_aircraft(self) -> AreaAircraftList:
+        """Aircraft currently in the configured area, marked if already tracked. Reuses the poller's snapshot."""
+        snapshot = await self._poller.latest_snapshot()
+        aircraft = list_area_aircraft(snapshot)
+        for a in aircraft:
+            a.tracked = a.icao_hex in self._tracked or (a.callsign or "").lower() in self._tracked
+        return AreaAircraftList(
+            fetched_at=snapshot.now,
+            latitude=self._settings.adsb_latitude,
+            longitude=self._settings.adsb_longitude,
+            radius_nm=self._settings.adsb_radius_nm,
+            aircraft=aircraft,
+        )
 
     def _record_results(self, results: dict[str, PollResult]) -> None:
         polled_at = datetime.now(UTC)

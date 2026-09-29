@@ -28,7 +28,9 @@ services:
     build:
       context: .
       dockerfile: api-service/Dockerfile
-    environment: *service-env
+    environment:
+      <<: *service-env
+      PRODUCER_URL: http://producer:8001
     ports:
       - "8000:8000"
     depends_on:

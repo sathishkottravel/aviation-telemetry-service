@@ -48,14 +48,14 @@ api-service/api_service/
   api/controllers.py         REST: /health, POST /api/telemetry
   graphql/schema.py          GraphQL queries and subscription
   graphql/types.py           GraphQL types
-  services/                  navigation, telemetry and live-broadcast logic
+  services/                  navigation, telemetry, live-broadcast and producer-client logic
 telemetry-worker/telemetry_worker/
   main.py                    entry point
   workers/telemetry_consumer.py   RabbitMQ message handler
   services/processing_service.py  normalize → persist → publish live
 adsb-producer/adsb_producer/
   main.py                    app + startup/shutdown (connects RabbitMQ, starts ADSB_PRODUCER_AIRCRAFT)
-  api/controllers.py         REST: /health, /ingestion/live/{start,stop,status}/{aircraft_id}
+  api/controllers.py         REST: /health, /ingestion/live/aircraft, /ingestion/live/{start,stop,status}/{aircraft_id}
   services/tracking_service.py   set of requested aircraft + the single area poller (in memory)
 shared/telemetry_shared/
   config.py  models/  database/  messaging/
@@ -148,6 +148,24 @@ subscription {
 
 The producer queries ADSB.lol for every aircraft within `ADSB_RADIUS_NM` of `ADSB_LATITUDE`/`ADSB_LONGITUDE` and picks out the tracked ones. It uses each aircraft's ICAO hex code as `flight_id` and keeps the callsign in `callsign`. Records without a position are skipped. Telemetry goes through the same RabbitMQ pipeline as `POST /api/telemetry`; the producer never writes to MongoDB.
 
+List the aircraft you can track, nearest first. The list reuses the poller's latest snapshot, so it doesn't add ADSB.lol requests:
+
+```sh
+curl http://localhost:8001/ingestion/live/aircraft   # fetched_at, radius_nm, aircraft[{icao_hex, callsign, distance_nm, tracked, ...}]
+```
+
+Or from GraphQL (the API calls the producer at `PRODUCER_URL`):
+
+```graphql
+query TrackableAircraft {
+  trackableAircraft {
+    fetchedAt
+    radiusNm
+    aircraft { icaoHex callsign distanceNm altitude groundSpeed tracked }
+  }
+}
+```
+
 Track an aircraft by ICAO hex code or callsign (case-insensitive):
 
 ```sh
@@ -156,7 +174,7 @@ curl http://localhost:8001/ingestion/live/status/4ab563          # running, in_a
 curl -X POST http://localhost:8001/ingestion/live/stop/4ab563    # 200; 404 if not tracked
 ```
 
-Then query `telemetryHistory(flightId: "4ab563")` or subscribe to `liveTelemetry(flightId: "4ab563")` on the API. To find aircraft IDs, open `https://api.adsb.lol/v2/point/59.3/18.0/100` and look at the `hex` and `flight` fields.
+Then query `telemetryHistory(flightId: "4ab563")` or subscribe to `liveTelemetry(flightId: "4ab563")` on the API. Always use the lowercase ICAO hex (`icaoHex`) as `flightId`, even if you started tracking by callsign.
 
 Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from startup. Tracking lives in memory, so a restart forgets aircraft started over HTTP.
 
@@ -167,6 +185,7 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 | `ADSB_RADIUS_NM` | `100` | Radius of the polled area in nautical miles |
 | `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup |
 | `ADSB_USER_AGENT` | project name + repo URL | ADSB.lol rejects generic User-Agents with 403 |
+| `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer for `trackableAircraft` |
 
 - **One request per interval.** A single area poller fetches the area once per interval and picks out every requested aircraft locally, however many are tracked. Start and stop only change the set of requested IDs. Nothing is requested while the set is empty.
 - **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s.
