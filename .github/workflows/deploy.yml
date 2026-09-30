@@ -1,4 +1,5 @@
 # Test, build ARM64 images, and deploy the backend to the Oracle VM on every push to main.
+# Pull requests run the same tests and image builds (without pushing images or deploying).
 # Run manually with an image_tag (an earlier commit SHA) to redeploy/roll back without building.
 # One-time setup (VM, secrets, GHCR visibility): deploy/README.md.
 name: deploy
@@ -6,6 +7,7 @@ name: deploy
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       image_tag:
@@ -59,6 +61,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -68,7 +71,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:latest
@@ -80,9 +83,9 @@ jobs:
 
   deploy:
     needs: build
-    # Deploy after a successful build, or directly for a manual image_tag run. Only ever from main.
+    # Deploy after a successful build, or directly for a manual image_tag run. Only ever from main, never for PRs.
     if: >-
-      always() && github.ref == 'refs/heads/main' &&
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
       (needs.build.result == 'success' || (inputs.image_tag != '' && needs.build.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: production
