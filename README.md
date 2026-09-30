@@ -567,8 +567,8 @@ api / worker / producer ──internal OTLP──► Jaeger;  producer is intern
 - `deploy/remote-deploy.sh`: `up --wait` on healthchecks; on failure, back to the previous tag and a failed job.
 - `deploy/caddy/api.caddy`: the one site block added to the VM's Caddyfile.
 - `deploy/infra/`: a sample stack for the VM's shared **Caddy + Jaeger all-in-one** on the `edge` network, run by
-  hand (not by the workflow). It covers the Jaeger UI, token-protected OTLP ingest, and per-project site files. See
-  [deploy/infra/README.md](deploy/infra/README.md).
+  hand (not by the workflow) with a single `sudo ./setup-infra.sh`. It covers the Jaeger UI, token-protected OTLP
+  ingest, per-project site files, and migrating from a Caddy on the host. See [deploy/infra/README.md](deploy/infra/README.md).
 - Images install exactly the versions in `uv.lock` (`uv export` + `pip install --require-hashes`), locally and in CI.
 
 One-time setup (DNS, `edge` network, Caddy block, deploy user, `.env`, GitHub environment and secrets, GHCR

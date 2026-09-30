@@ -42,7 +42,8 @@ Public API surface (`https://api.sathishkottravel.com`):
 Do these before merging the PR that adds the workflow: merging triggers the first deploy.
 
 ### 1. Shared infrastructure: Caddy, Jaeger, and the `edge` network
-Set up the sample stack in [`deploy/infra/`](infra/README.md) on the VM by hand. It covers:
+Set up the shared stack in [`deploy/infra/`](infra/README.md) on the VM. After you copy your site files into
+`/opt/infra/sites/`, one script does the rest: `sudo ./setup-infra.sh`. It covers:
 - DNS for `api.sathishkottravel.com`, next to `jaeger.*` and `otel.*`
 - opening ports 80 and 443 in Oracle's Security List and the VM's own firewall
 - replacing your current Caddy and Jaeger
