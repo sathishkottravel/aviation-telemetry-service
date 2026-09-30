@@ -551,10 +551,10 @@ The local Jaeger stays the default; unset the three variables to go back to it.
 
 ## Production deployment (Oracle VM)
 
-The backend runs on an Oracle Always Free VM (ARM). Every push to `main` runs
+The backend runs on an Oracle Always Free VM (x86-64 AMD shape). Every push to `main` runs
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 1. unit tests
-2. ARM64 images pushed to GHCR, tagged with the commit SHA
+2. linux/amd64 images pushed to GHCR, tagged with the commit SHA
 3. deploy over SSH, with healthchecks, automatic rollback and a smoke test. **This step is currently off** (repository
    variable `DEPLOY_ENABLED`). Deploys are done by hand on the VM with `./deploy/deploy.sh pull` (CI images) or `build` (build on the VM); see
    [deploy/README.md → Manual deploy](deploy/README.md#manual-deploy).
