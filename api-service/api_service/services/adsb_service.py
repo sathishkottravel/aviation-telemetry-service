@@ -26,7 +26,9 @@ class NotTrackingError(Exception):
 def connect() -> None:
     global _http
     if _http is None:
-        _http = httpx.AsyncClient(base_url=get_settings().producer_url, timeout=10)
+        settings = get_settings()
+        headers = {"Authorization": f"Bearer {settings.producer_token}"} if settings.producer_token else None
+        _http = httpx.AsyncClient(base_url=settings.producer_url, headers=headers, timeout=10)
 
 
 async def close() -> None:

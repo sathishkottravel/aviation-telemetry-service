@@ -1,0 +1,89 @@
+# Render Blueprint: api, producer and worker as three free web services, next to the Oracle VM deployment.
+# Setup, secrets and free-tier caveats: deploy/render/README.md.
+#
+# Free web services sleep after 15 minutes without inbound HTTP. The api pings the producer and worker
+# (WAKE_URLS) on startup and every 10 minutes, so the whole stack wakes with the api and sleeps after it.
+# Values marked sync: false are entered in the Render dashboard when the Blueprint is created.
+
+envVarGroups:
+  - name: aviation-shared
+    envVars:
+      - key: LOG_LEVEL
+        value: INFO
+      - key: MONGODB_DB
+        value: aviation
+      - key: OTEL_ENABLED
+        value: "false"
+      # The api sends it, the producer requires it (the producer is public on Render).
+      - key: PRODUCER_TOKEN
+        generateValue: true
+
+services:
+  - type: web
+    name: aviation-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./api-service/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths: [api-service/**, shared/**, pyproject.toml, uv.lock]
+    envVars:
+      - fromGroup: aviation-shared
+      - key: MONGODB_URI
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false
+      - key: API_TOKEN
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      # https://<producer>.onrender.com
+      - key: PRODUCER_URL
+        sync: false
+      # https://<producer>.onrender.com/health,https://<worker>.onrender.com/health
+      - key: WAKE_URLS
+        sync: false
+
+  - type: web
+    name: aviation-producer
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./adsb-producer/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths: [adsb-producer/**, shared/**, pyproject.toml, uv.lock]
+    envVars:
+      - fromGroup: aviation-shared
+      - key: RABBITMQ_URL
+        sync: false
+      - key: ADSB_POLL_INTERVAL
+        value: "10"
+      # Tracking state is in memory and lost when the service sleeps; these IDs are re-tracked on wake.
+      # Leave empty if the VM producer tracks the same aircraft (shared broker and database).
+      - key: ADSB_PRODUCER_AIRCRAFT
+        sync: false
+
+  - type: web
+    name: aviation-worker
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./telemetry-worker/Dockerfile
+    dockerContext: .
+    # The worker listens on $PORT only for this health check (telemetry_worker/services/health_server.py).
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths: [telemetry-worker/**, shared/**, pyproject.toml, uv.lock]
+    envVars:
+      - fromGroup: aviation-shared
+      - key: MONGODB_URI
+        sync: false
+      - key: RABBITMQ_URL
+        sync: false

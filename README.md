@@ -325,7 +325,8 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | `DELETE` | `/api/telemetry?flight_id=&before=&older_than_hours=` | Prune telemetry; needs `X-Admin-Token` | 200 `{"deleted": n}`, 401, 403 disabled, 422, 503 |
 | `POST` / `GET` / WebSocket | `/graphql` | GraphQL (see above) and GraphiQL | 200 |
 
-**adsb-producer** (`http://localhost:8001`, OpenAPI docs at `/docs`)
+**adsb-producer** (`http://localhost:8001`, OpenAPI docs at `/docs`). When `PRODUCER_TOKEN` is set (Render), the
+`/ingestion/live/*` routes need `Authorization: Bearer <PRODUCER_TOKEN>` (401 otherwise); the api sends it.
 
 | Method | Path | Purpose | Responses |
 | ------ | ---- | ------- | --------- |
@@ -335,7 +336,8 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
 | `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
 
-**telemetry-worker** has no HTTP interface. It only consumes the `telemetry.ingest` RabbitMQ queue.
+**telemetry-worker** only consumes the `telemetry.ingest` RabbitMQ queue. When `PORT` is set (Render web service), it
+also answers any `GET` on that port with `200 {"status": "ok", "rabbitmq": <connected>}`.
 
 Example requests:
 
@@ -579,6 +581,13 @@ One-time setup (Caddy block, deploy user, `.env`, GitHub environment and secrets
 (rollback, logs) are in **[deploy/README.md](deploy/README.md)**. To run the e2e suite against production:
 `E2E_API_URL=https://api.sathishkottravel.com E2E_API_TOKEN=... uv run pytest -m e2e` (the seed step needs
 `E2E_MONGODB_URI` for Atlas).
+
+## Deployment on Render (free tier)
+
+A second deployment runs on Render, in parallel with the VM, from [`render.yaml`](render.yaml): api, producer and
+worker as three free web services sharing the same MongoDB Atlas database and CloudAMQP broker. Free services sleep
+after 15 minutes idle; the api pings the others (`WAKE_URLS`) so the stack wakes and sleeps together. Setup and
+caveats: **[deploy/render/README.md](deploy/render/README.md)**.
 
 ## Status
 

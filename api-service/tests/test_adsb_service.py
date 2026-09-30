@@ -49,3 +49,13 @@ async def test_unreachable_producer(monkeypatch):
                                                                  transport=httpx.MockTransport(refuse)))
     with pytest.raises(ProducerUnavailableError, match="cannot reach"):
         await adsb_service.list_trackable_aircraft()
+
+
+async def test_sends_producer_token_when_configured(set_settings, monkeypatch):
+    set_settings(producer_token="p-secret")
+    monkeypatch.setattr(adsb_service, "_http", None)
+    adsb_service.connect()
+    try:
+        assert adsb_service._http.headers["Authorization"] == "Bearer p-secret"
+    finally:
+        await adsb_service.close()

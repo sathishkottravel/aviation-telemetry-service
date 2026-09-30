@@ -119,3 +119,11 @@ def test_rest_area_listing(client):
     body = client.get("/ingestion/live/aircraft").json()
     assert body["radius_nm"] == get_settings().adsb_radius_nm
     assert [a["icao_hex"] for a in body["aircraft"]] == ["4ab567", "4ab563"]
+
+
+def test_producer_token_guards_ingestion_routes_but_not_health(client, set_settings):
+    set_settings(producer_token="p-secret")
+    assert client.get("/health").status_code == 200
+    assert client.get("/ingestion/live/status/*").status_code == 401
+    assert client.get("/ingestion/live/status/*", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/ingestion/live/status/*", headers={"Authorization": "Bearer p-secret"}).status_code == 200
