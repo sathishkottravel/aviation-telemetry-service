@@ -4,7 +4,7 @@ Every push to `main` runs `.github/workflows/deploy.yml`:
 
 ```
 push to main ─► test (uv run pytest)
-             ─► build api / worker / producer for linux/arm64 on a native ARM runner
+             ─► build api / worker / producer for linux/amd64 (the VM is an x86 AMD shape)
                 → ghcr.io/sathishkottravel/aviation-telemetry-service/<svc>:<commit-sha>
              ─► deploy: OFF for now (only runs when the repository variable DEPLOY_ENABLED is "true")
 ```

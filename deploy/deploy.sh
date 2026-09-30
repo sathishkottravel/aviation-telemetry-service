@@ -65,9 +65,13 @@ step "4/6 Images"
 if [[ "$MODE" == pull ]]; then
   TAG="${2:-$(git -C "$REPO" rev-parse HEAD)}"
   PULL_POLICY=always
+  ARCH="$(docker version -f '{{.Server.Arch}}')"
   for s in api worker producer; do
-    if docker manifest inspect "$IMAGES/$s:$TAG" >/dev/null 2>&1; then ok "$s:$TAG in GHCR"
-    else fail "$s:$TAG not found in GHCR (CI for that commit not finished, or the package isn't public yet)"; fi
+    if ! manifest="$(docker manifest inspect -v "$IMAGES/$s:$TAG" 2>/dev/null)"; then
+      fail "$s:$TAG not found in GHCR (CI for that commit not finished, or the package isn't public yet)"
+    elif ! grep -q "\"architecture\": \"$ARCH\"" <<<"$manifest"; then
+      fail "$s:$TAG has no $ARCH image (built for another CPU): use ./deploy/deploy.sh build, or a newer commit"
+    else ok "$s:$TAG in GHCR ($ARCH)"; fi
   done
   stop_if_failed
 else

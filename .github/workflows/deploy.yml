@@ -1,4 +1,4 @@
-# Test and build ARM64 images on every push to main (images pushed to GHCR, tagged with the commit SHA).
+# Test and build linux/amd64 images on every push to main (images pushed to GHCR, tagged with the commit SHA).
 # Pull requests run the same tests and image builds (without pushing images or deploying).
 #
 # Deploying to the VM from CI is OFF until the repository variable DEPLOY_ENABLED is "true"
@@ -45,8 +45,8 @@ jobs:
   build:
     needs: test
     if: inputs.image_tag == ''
-    # Native ARM64 runner (free for public repos), matching the Ampere VM.
-    runs-on: ubuntu-24.04-arm
+    # Native x86-64 runner, matching the Oracle VM (AMD shape).
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -72,7 +72,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/arm64
+          platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: |
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
