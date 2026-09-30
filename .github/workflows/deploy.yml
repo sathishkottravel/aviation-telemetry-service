@@ -1,7 +1,9 @@
-# Test, build ARM64 images, and deploy the backend to the Oracle VM on every push to main.
+# Test and build ARM64 images on every push to main (images pushed to GHCR, tagged with the commit SHA).
 # Pull requests run the same tests and image builds (without pushing images or deploying).
-# Run manually with an image_tag (an earlier commit SHA) to redeploy/roll back without building.
-# One-time setup (VM, secrets, GHCR visibility): deploy/README.md.
+#
+# Deploying to the VM from CI is OFF until the repository variable DEPLOY_ENABLED is "true"
+# (Settings → Secrets and variables → Actions → Variables). Until then, deploy by hand: deploy/README.md.
+# With it on, every push to main deploys; run manually with an image_tag (commit SHA) to redeploy/roll back.
 name: deploy
 
 on:
@@ -83,9 +85,11 @@ jobs:
 
   deploy:
     needs: build
-    # Deploy after a successful build, or directly for a manual image_tag run. Only ever from main, never for PRs.
+    # Only when enabled (vars.DEPLOY_ENABLED), only from main, never for PRs; after a successful build, or directly
+    # for a manual image_tag run.
     if: >-
-      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      always() && vars.DEPLOY_ENABLED == 'true' && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
       (needs.build.result == 'success' || (inputs.image_tag != '' && needs.build.result == 'skipped'))
     runs-on: ubuntu-latest
     environment: production
