@@ -1,10 +1,12 @@
 # Shared Caddy for the VM. Domains and the OTLP ingest token come from .env (see .env.example).
-# Per-project sites live in ./sites/*.caddy (mounted at /etc/caddy/sites) and are imported at the end.
+# This file is managed by setup-infra.sh (replaced on every run, with a backup). Your own config goes in:
+#   /opt/infra/global.caddy   global options (e.g. `email you@example.com`), imported into the block below
+#   /opt/infra/sites/*.caddy  project site blocks, imported at the end of this file
+# Site files must not define the Jaeger/OTLP hostnames below and must not contain a global `{ ... }` block.
 
-# Optional global options, e.g. an email for Let's Encrypt expiry notices:
-# {
-# 	email you@example.com
-# }
+{
+	import /etc/caddy/global.caddy*
+}
 
 # Jaeger UI: public, read-only.
 {$JAEGER_DOMAIN} {

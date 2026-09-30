@@ -54,6 +54,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./global.caddy:/etc/caddy/global.caddy:ro   # your global options; created empty by setup-infra.sh
       - ./sites:/etc/caddy/sites:ro
       - caddy-data:/data        # certificates; keep this volume to avoid re-issuing on every recreate
       - caddy-config:/config

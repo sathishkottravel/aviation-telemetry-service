@@ -28,7 +28,8 @@ through `sites/api.caddy` and sends its traces to `jaeger` internally. Other pro
 | ---- | ------- |
 | `setup-infra.sh` | One script that installs, migrates and verifies everything; see below |
 | `docker-compose.yml` | Caddy, Jaeger, and a one-shot `jaeger-init` that makes the data volume writable for Jaeger's non-root user |
-| `Caddyfile` | The Jaeger UI site, the token-protected OTLP site, and `import sites/*.caddy` |
+| `Caddyfile` | Managed by the script: global options (importing `global.caddy`), the Jaeger UI site, the token-protected OTLP site, and `import sites/*.caddy` |
+| `global.caddy` (created on the VM) | Your global options, e.g. `email you@example.com`. Created empty and never overwritten |
 | `jaeger-config.yaml` | Jaeger v2: OTLP receivers on 4317/4318, Badger storage with a 72 h TTL, UI on 16686, health on 13133 |
 | `.env.example` | `JAEGER_DOMAIN`, `OTEL_DOMAIN`, `OTEL_INGEST_TOKEN` |
 | `sites/` | One `*.caddy` file per project |
@@ -66,6 +67,16 @@ upstreams that point to the VM itself:
   the Docker bridge address `172.17.0.1`). Keep their ports closed in the VM firewall and the Security List.
 - **OTLP token header:** the stack's `otel.*` site expects `Authorization: Bearer <token>`. If your old block checked a
   different header, adjust the `@authorized` matcher in `deploy/infra/Caddyfile` before running the script.
+
+> **Rules for site files.** Caddy doesn't read `sites/*.caddy` as separate configs: the stack's `Caddyfile` ends with
+> `import sites/*.caddy`, which pastes every site file into it. So:
+> - **Site blocks and snippets only.** No global options block (`{ … }` without a hostname). Put global options such as
+>   `email you@example.com` in `/opt/infra/global.caddy`, without braces. The script creates that file and never
+>   overwrites it.
+> - **No `jaeger.*` / `otel.*` blocks.** The stack's `Caddyfile` already provides both.
+> - **Each hostname in one file only.**
+>
+> `setup-infra.sh` checks this before doing anything and names the file and line of each conflict.
 
 ## 3. Run the setup script
 
@@ -149,6 +160,19 @@ container exists.
 
 
 ## Troubleshooting
+
+**`ambiguous site definition: jaeger.sathishkottravel.com`** (or another hostname)
+
+The same hostname is defined twice. Usually a `jaeger.*` or `otel.*` block was copied from the old
+`/etc/caddy/Caddyfile` into `sites/`, where it duplicates the stack's own. Delete it from the site file, or keep a
+hostname in one site file only.
+
+**`server block without any key is global configuration, and if used, it must be first`**
+
+A site file contains a global options block (`{ … }` with no hostname), and imported files end up at the end of the
+config. Move the options (without the braces) into `/opt/infra/global.caddy`, and delete the block from the site file.
+
+After fixing either one, re-run `sudo ./setup-infra.sh`. Nothing was stopped, so the old setup kept serving.
 
 **`Unable to locate package docker-compose-plugin`** / **`docker: 'compose' is not a docker command`**
 

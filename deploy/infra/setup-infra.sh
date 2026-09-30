@@ -208,6 +208,12 @@ install_files() {
     install -m 644 "$SRC_DIR/$f" "$INFRA_DIR/$f"
   done
   install -m 644 "$SRC_DIR/sites/README.md" "$INFRA_DIR/sites/README.md"
+  if [[ ! -f "$INFRA_DIR/global.caddy" ]]; then
+    # Yours to edit; never overwritten. Imported inside the Caddyfile's global options block.
+    printf '# Caddy global options (imported into the global block of /opt/infra/Caddyfile). Examples:\n# email you@example.com\n' \
+      > "$INFRA_DIR/global.caddy"
+    ok "created global.caddy (for global options such as the Let's Encrypt email)"
+  fi
   ok "configs in place"
 }
 
@@ -277,12 +283,78 @@ check_sites() {
   fi
 }
 
+# Site files are pasted into the end of the Caddyfile by `import sites/*.caddy`, so they must not repeat a hostname
+# (the stack's own or each other's) and must not contain a global `{ ... }` block. Caddy's own errors for that are
+# cryptic ("ambiguous site definition", "server block without any key ..."), so check first and name the file/line.
+check_site_conflicts() {
+  local sites=()
+  shopt -s nullglob
+  sites=("$INFRA_DIR"/sites/*.caddy)
+  shopt -u nullglob
+  [[ ${#sites[@]} -eq 0 ]] && return 0
+
+  # Print "file:line<TAB>key" for every top-level block: key = GLOBAL, or one line per site address.
+  # Snippets "(name) {" are skipped. Braces inside placeholders like {$VAR} balance out within a line.
+  local blocks
+  blocks="$(awk '
+    FNR == 1 { depth = 0 }
+    {
+      line = $0
+      sub(/(^|[ \t])#.*/, "", line)
+      if (depth == 0 && line ~ /\{[ \t]*$/) {
+        key = line
+        sub(/\{[ \t]*$/, "", key)
+        gsub(/^[ \t]+|[ \t]+$/, "", key)
+        if (key == "") {
+          printf "%s:%d\tGLOBAL\n", FILENAME, FNR
+        } else if (key !~ /^\(/) {
+          n = split(key, addrs, /[ \t,]+/)
+          for (i = 1; i <= n; i++) if (addrs[i] != "") printf "%s:%d\t%s\n", FILENAME, FNR, tolower(addrs[i])
+        }
+      }
+      depth += gsub(/\{/, "{", line) - gsub(/\}/, "}", line)
+    }' "${sites[@]}")"
+
+  local problems=0 where key reserved seen_where
+  local -A seen=()
+  while IFS=$'\t' read -r where key; do
+    [[ -z "$where" ]] && continue
+    where="${where#"$INFRA_DIR"/}"
+    if [[ "$key" == "GLOBAL" ]]; then
+      warn "$where: a global options block { ... } can't be in a site file (Caddy only allows it at the very top)."
+      warn "    move its options into $INFRA_DIR/global.caddy (without the braces) and delete the block"
+      problems=$((problems + 1))
+      continue
+    fi
+    for reserved in "${JAEGER_DOMAIN,,}" "${OTEL_DOMAIN,,}"; do
+      if [[ "$key" == "$reserved" || "$key" == "https://$reserved" ]]; then
+        warn "$where: defines $reserved, which the stack's Caddyfile already provides (Jaeger UI / OTLP ingest)."
+        warn "    delete that block from the site file"
+        problems=$((problems + 1))
+      fi
+    done
+    if [[ -n "${seen[$key]:-}" ]]; then
+      seen_where="${seen[$key]}"
+      warn "$where: $key is already defined at $seen_where; keep it in one file only"
+      problems=$((problems + 1))
+    else
+      seen[$key]="$where"
+    fi
+  done <<<"$blocks"
+
+  if [[ $problems -gt 0 ]]; then
+    die "$problems conflict(s) in $INFRA_DIR/sites; fix them and re-run (nothing has been stopped)"
+  fi
+  ok "no conflicts between site files and the stack's Caddyfile"
+}
+
 validate_config() {
   log "Validating the Caddy configuration (nothing has been stopped yet)"
   docker pull -q "$CADDY_IMAGE" >/dev/null
   local out
   if ! out="$(docker run --rm --env-file "$INFRA_DIR/.env" \
-        -v "$INFRA_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$INFRA_DIR/sites:/etc/caddy/sites:ro" \
+        -v "$INFRA_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$INFRA_DIR/global.caddy:/etc/caddy/global.caddy:ro" \
+        -v "$INFRA_DIR/sites:/etc/caddy/sites:ro" \
         "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile 2>&1)"; then
     printf '%s\n' "$out" | grep -iE "error" >&2 || printf '%s\n' "$out" >&2
     die "invalid Caddy configuration; fix $INFRA_DIR/Caddyfile or sites/*.caddy and re-run"
@@ -409,6 +481,7 @@ open_firewall
 install_files
 configure_env
 check_sites
+check_site_conflicts
 validate_config
 start_jaeger
 stop_old_setup
