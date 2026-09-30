@@ -37,6 +37,12 @@ class Settings(BaseSettings):
 
     producer_url: str = "http://localhost:8001"
     """Where the API reaches the ADS-B producer (for listing trackable aircraft)."""
+    producer_token: str = ""
+    """Bearer token the producer requires on its /ingestion routes (the API sends it). Empty disables the check;
+    set it wherever the producer is publicly reachable (Render)."""
+    wake_urls: str = ""
+    """Comma-separated URLs the API pings on startup and every 10 minutes, keeping sleeping hosts (Render free
+    tier producer and worker) awake while the API is in use. Empty disables it."""
 
     adsb_base_url: str = "https://api.adsb.lol"
     adsb_poll_interval: float = 5.0
@@ -52,6 +58,10 @@ class Settings(BaseSettings):
     @property
     def adsb_producer_aircraft_ids(self) -> list[str]:
         return [a.strip().lower() for a in self.adsb_producer_aircraft.split(",") if a.strip()]
+
+    @property
+    def wake_url_list(self) -> list[str]:
+        return [u.strip() for u in self.wake_urls.split(",") if u.strip()]
 
 
 @lru_cache

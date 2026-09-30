@@ -16,6 +16,8 @@ os.environ.update(
         "ADMIN_TOKEN": "",
         "ADSB_POLL_INTERVAL": "5",
         "PRODUCER_URL": "http://producer.test",
+        "PRODUCER_TOKEN": "",
+        "WAKE_URLS": "",
     }
 )
 
