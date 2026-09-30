@@ -124,9 +124,38 @@ preflight() {
     systemctl enable --now docker
   fi
   docker info >/dev/null 2>&1 || die "Docker is installed but not running (systemctl start docker)"
-  docker compose version >/dev/null 2>&1 || die "the Docker compose plugin is missing (apt install docker-compose-plugin)"
   have curl || die "curl is required"
-  ok "docker $(docker version --format '{{.Server.Version}}'), $(docker compose version --short 2>/dev/null || echo compose)"
+  docker compose version >/dev/null 2>&1 || install_compose
+  ok "docker $(docker version --format '{{.Server.Version}}'), compose $(docker compose version --short 2>/dev/null)"
+}
+
+apt_candidate() {  # prints the installable version of an apt package, empty if none
+  apt-cache policy "$1" 2>/dev/null | awk '/Candidate:/ {print ($2 == "(none)" ? "" : $2)}'
+}
+
+install_compose() {
+  warn "the Docker Compose v2 plugin ('docker compose') is missing"
+  confirm "Install it now?" || die "Docker Compose is required"
+  if have apt-get; then
+    apt-get update -qq >/dev/null 2>&1 || true
+    if [[ -n "$(apt_candidate docker-compose-v2)" ]]; then
+      # Ubuntu's own package, matching Ubuntu's docker.io engine (docker-compose-plugin only exists in Docker's repo).
+      apt-get install -y -qq docker-compose-v2 >/dev/null && ok "installed docker-compose-v2 (Ubuntu)"
+    elif [[ -n "$(apt_candidate docker-compose-plugin)" ]]; then
+      apt-get install -y -qq docker-compose-plugin >/dev/null && ok "installed docker-compose-plugin (Docker repo)"
+    fi
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    # Fallback: the official static plugin binary for this architecture (x86_64 / aarch64).
+    local arch dest=/usr/local/lib/docker/cli-plugins/docker-compose
+    arch="$(uname -m)"
+    install -d "$(dirname "$dest")"
+    curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$arch" -o "$dest" \
+      || die "could not download Docker Compose for $arch"
+    chmod +x "$dest"
+    ok "installed the Docker Compose plugin binary ($arch) to $dest"
+  fi
+  docker compose version >/dev/null 2>&1 || die "Docker Compose still not working. On Ubuntu: sudo apt install docker-compose-v2 (enable 'universe' if needed), or see deploy/infra/README.md → Troubleshooting"
 }
 
 open_firewall() {

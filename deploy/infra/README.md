@@ -80,8 +80,9 @@ to `jaeger.sathishkottravel.com` / `otel.sathishkottravel.com` (change them with
 
 What it does, in order (it stops at the first problem):
 
-1. **Checks** it's running as root, installs Docker if it's missing (with the official `get.docker.com` script), and
-   checks the compose plugin and `curl` are present.
+1. **Checks** it's running as root and `curl` is present, installs Docker if it's missing (with the official
+   `get.docker.com` script), and installs Docker Compose v2 if `docker compose` is missing (see
+   [Troubleshooting](#troubleshooting)).
 2. **Opens the VM firewall** for 80/tcp, 443/tcp and 443/udp. It uses `firewalld` if that's active, otherwise
    `iptables` (inserted before Oracle's REJECT rule, never duplicated, saved with `netfilter-persistent`).
 3. **Copies the configs** to `/opt/infra`, backing up any changed file to `backups/`. It creates the `edge` network.
@@ -146,6 +147,31 @@ Exporter settings for other projects:
 The stack keeps running when the backend is redeployed or removed. Caddy only proxies to `aviation-api` while that
 container exists.
 
+
+## Troubleshooting
+
+**`Unable to locate package docker-compose-plugin`** / **`docker: 'compose' is not a docker command`**
+
+Your Docker comes from Ubuntu's own `docker.io` package. `docker-compose-plugin` only exists in Docker's apt repository;
+Ubuntu ships the same Compose v2 plugin as `docker-compose-v2`. `setup-infra.sh` installs it automatically. By hand:
+
+```sh
+sudo apt update && sudo apt install -y docker-compose-v2     # enable 'universe' first if needed: sudo add-apt-repository universe
+docker compose version
+```
+
+Don't add Docker's repository just for `docker-compose-plugin` next to Ubuntu's `docker.io`; the two sets of packages
+conflict. If no package works, install the official plugin binary (for ARM VMs, `uname -m` prints `aarch64`):
+
+```sh
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)"   -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+```
+
+**The Jaeger UI doesn't answer after the switch.** Check that the DNS records point to this VM and that ports 80 and 443
+are open in the Oracle Security List. Then check `docker compose logs caddy` for certificate errors. Roll back any time
+with `sudo ./setup-infra.sh --rollback`.
 
 ## Appendix: doing it by hand
 

@@ -65,6 +65,7 @@ sudo -u deploy install -d -m 700 /home/deploy/.ssh
 # Put aviation-deploy.pub into /home/deploy/.ssh/authorized_keys (mode 600, owned by deploy).
 ```
 Password SSH logins should be off (`PasswordAuthentication no`); `fail2ban` is recommended.
+The deploy uses `docker compose`; `setup-infra.sh` (step 1) already installs it if it's missing.
 
 ### 3. Production settings
 ```sh
