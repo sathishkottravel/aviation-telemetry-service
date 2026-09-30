@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     telemetry_ttl_days: float = 1.0
     """MongoDB deletes telemetry older than this automatically (TTL index). 0 disables expiry."""
 
+    api_token: str = ""
+    """Bearer token for GraphQL and POST /api/telemetry (Authorization header; connection_init for
+    subscriptions). Empty disables API authentication."""
+
     admin_token: str = ""
     """Required in the X-Admin-Token header for admin endpoints (telemetry pruning). Empty disables them."""
 

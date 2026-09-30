@@ -3,8 +3,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from strawberry.fastapi import GraphQLRouter
 
+from api_service.api.auth import ApiTokenMiddleware, AuthenticatedGraphQLRouter
 from api_service.api.controllers import router as rest_router
 from api_service.graphql.schema import schema
 from api_service.services import adsb_service, telemetry_service
@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):
 # OTEL_EXPORTER_OTLP_ENDPOINT is set, duplicating ours; tracing is configured in telemetry_shared.observability.
 app = FastAPI(title="Aviation Telemetry API", lifespan=lifespan, telemetry={"auto_configure": False})
 app.include_router(rest_router)
-app.include_router(GraphQLRouter(schema), prefix="/graphql")
+app.include_router(AuthenticatedGraphQLRouter(schema), prefix="/graphql")
+app.add_middleware(ApiTokenMiddleware)
 if tracing_enabled:
     # Skip the per-message ASGI receive/send spans; the request span and our custom spans tell the story.
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])

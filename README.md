@@ -275,6 +275,45 @@ subscription LiveAll {
 - **IDs:** `liveTelemetry` and `telemetryHistory` take the flight ID. For ADS-B data that's the lowercase ICAO hex (`icaoHex`), even when tracking was started by callsign.
 - **Errors:** tracking operations return errors with `extensions.code` set to `ALREADY_TRACKING`, `NOT_TRACKING` or `PRODUCER_UNAVAILABLE`.
 
+### Authentication
+
+Set `API_TOKEN` to require a token (production does); leave it empty to keep the API open (local development, the
+default compose setup, tests).
+
+| Endpoint | Requires |
+| -------- | -------- |
+| GraphQL over HTTP (`POST /graphql`, `GET /graphql?query=...`) | `Authorization: Bearer <API_TOKEN>` |
+| GraphQL subscriptions (WebSocket `/graphql`) | `{"authorization": "Bearer <API_TOKEN>"}` in the `connection_init` payload (browsers can't set WebSocket headers); otherwise the socket closes with 4403 |
+| `POST /api/telemetry` | `Authorization: Bearer <API_TOKEN>` |
+| `DELETE /api/telemetry` | `X-Admin-Token: <ADMIN_TOKEN>` (separate, see [Telemetry retention](#telemetry-retention)) |
+| `/health`, `/docs`, `/openapi.json`, the GraphiQL page | nothing |
+
+Missing or wrong tokens get `401` with `WWW-Authenticate: Bearer`.
+
+```sh
+curl -X POST https://api.sathishkottravel.com/graphql \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"query":"{ airports { icao name } }"}'
+```
+
+In **GraphiQL**, open the page without a token, then add `{"Authorization": "Bearer <API_TOKEN>"}` in the **Headers**
+tab before running operations.
+
+With **Apollo Client**, send the token on both links:
+
+```ts
+const httpLink = new HttpLink({
+  uri: "https://api.sathishkottravel.com/graphql",
+  headers: { Authorization: `Bearer ${API_TOKEN}` },
+});
+const wsLink = new GraphQLWsLink(createClient({
+  url: "wss://api.sathishkottravel.com/graphql",
+  connectionParams: { authorization: `Bearer ${API_TOKEN}` },
+}));
+```
+
+A token shipped in a public browser app is visible to its users; it keeps out casual traffic, not a determined client.
+
 ### REST endpoints
 
 **api-service** (`http://localhost:8000`, OpenAPI docs at `/docs`)
@@ -352,7 +391,7 @@ uv run pytest -m ""            # everything
   - REST ingest reaching `liveTelemetry` snapshots (one flight and `*`, and the immediate snapshot for a late subscriber) and `telemetryHistory` (including time windows)
   - the full tracking lifecycle with its error codes
   - `trackableAircraft`, skipped if ADSB.lol has no snapshot yet
-  - Each test uses a unique `E2E-...` flight ID. Set `E2E_ADMIN_TOKEN` (matching the stack's `ADMIN_TOKEN`) to delete that telemetry afterwards; otherwise the TTL removes it. Other settings: `E2E_API_URL`, `E2E_MONGODB_URI`, `E2E_MONGODB_DB`.
+  - Each test uses a unique `E2E-...` flight ID. Set `E2E_ADMIN_TOKEN` (matching the stack's `ADMIN_TOKEN`) to delete that telemetry afterwards; otherwise the TTL removes it. Set `E2E_API_TOKEN` when the API requires `API_TOKEN`. Other settings: `E2E_API_URL`, `E2E_MONGODB_URI`, `E2E_MONGODB_DB`.
 - **Skipping:** integration and end-to-end tests skip themselves when their services aren't reachable.
 
 ## Live ADS-B ingestion
@@ -509,6 +548,36 @@ Grafana Cloud's OTLP gateway accepts **HTTP only**. With the default gRPC protoc
 4. Run `docker compose up`. The traces appear in Grafana under **Explore → Tempo**, where you can search by `service.name` or a tag such as `flight.id`.
 
 The local Jaeger stays the default; unset the three variables to go back to it.
+
+## Production deployment (Oracle VM)
+
+The backend runs on an Oracle Always Free VM (ARM). Every push to `main` runs
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+1. unit tests
+2. ARM64 images pushed to GHCR, tagged with the commit SHA
+3. SSH deploy with healthchecks and automatic rollback
+4. smoke test
+
+```
+Internet ─► Caddy (your /etc/caddy, in Docker) ─┬─ jaeger.* / otel.* ─► jaeger (Docker)
+                                                └─ api.sathishkottravel.com ─► aviation-api:8000 (GraphQL + REST, API_TOKEN)
+Docker network "edge": caddy, jaeger, api, worker, producer (traces → jaeger:4318); MongoDB Atlas + CloudAMQP external
+```
+
+- **`deploy/docker-compose.prod.yml`:** the three services from GHCR images. They join the `edge` network and publish no
+  ports. Settings come from the VM-only `/opt/aviation/.env` (template:
+  `deploy/.env.prod.example`).
+- **`deploy/remote-deploy.sh`:** `up --wait` on healthchecks. On failure, it goes back to the previous tag and the job
+  fails.
+- **`deploy/caddy/api.caddy`:** the one site block to add to the VM's Caddyfile.
+- **`deploy/infra/`:** Caddy (with your own `/etc/caddy` config) and Jaeger in Docker on `edge`, set up once with
+  `sudo ./setup-infra.sh`; see [deploy/infra/README.md](deploy/infra/README.md).
+- **Images** install exactly the versions in `uv.lock` (`uv export` + `pip install --require-hashes`), locally and in CI.
+
+One-time setup (Caddy block, deploy user, `.env`, GitHub environment and secrets, GHCR visibility) and operations
+(rollback, logs) are in **[deploy/README.md](deploy/README.md)**. To run the e2e suite against production:
+`E2E_API_URL=https://api.sathishkottravel.com E2E_API_TOKEN=... uv run pytest -m e2e` (the seed step needs
+`E2E_MONGODB_URI` for Atlas).
 
 ## Status
 

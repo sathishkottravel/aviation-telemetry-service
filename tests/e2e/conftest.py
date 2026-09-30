@@ -2,7 +2,8 @@
 
 Settings (environment): E2E_API_URL (default http://localhost:8000), E2E_MONGODB_URI / E2E_MONGODB_DB for
 seeding the stack's database (defaults: mongodb://localhost:27017, aviation), E2E_ADMIN_TOKEN to clean up
-test telemetry through DELETE /api/telemetry (otherwise the TTL removes it).
+test telemetry through DELETE /api/telemetry (otherwise the TTL removes it), E2E_API_TOKEN when the API
+requires API_TOKEN (sent as the Authorization header and in the subscription connection_init payload).
 """
 
 import asyncio
@@ -18,6 +19,8 @@ import websockets
 API_URL = os.environ.get("E2E_API_URL", "http://localhost:8000")
 WS_URL = API_URL.replace("http", "ws", 1) + "/graphql"
 ADMIN_TOKEN = os.environ.get("E2E_ADMIN_TOKEN", "")
+API_TOKEN = os.environ.get("E2E_API_TOKEN", "")
+AUTH_HEADERS = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
 
 
 class GraphQLClient:
@@ -42,7 +45,10 @@ class GraphQLClient:
     async def subscribe(self, query: str, variables: dict | None = None):
         """Open a graphql-transport-ws subscription; yields an async next() for the next payload's data."""
         async with websockets.connect(WS_URL, subprotocols=["graphql-transport-ws"]) as ws:
-            await ws.send(json.dumps({"type": "connection_init"}))
+            init = {"type": "connection_init"}
+            if API_TOKEN:
+                init["payload"] = {"authorization": f"Bearer {API_TOKEN}"}
+            await ws.send(json.dumps(init))
             assert json.loads(await ws.recv())["type"] == "connection_ack"
             await ws.send(json.dumps({"id": "1", "type": "subscribe",
                                       "payload": {"query": query, "variables": variables or {}}}))
@@ -58,7 +64,7 @@ class GraphQLClient:
 
 @pytest.fixture
 async def api():
-    async with httpx.AsyncClient(base_url=API_URL, timeout=20) as http:
+    async with httpx.AsyncClient(base_url=API_URL, timeout=20, headers=AUTH_HEADERS) as http:
         try:
             (await http.get("/health")).raise_for_status()
         except httpx.HTTPError:

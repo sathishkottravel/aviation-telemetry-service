@@ -1,0 +1,57 @@
+# Backend services on the production VM (deployed by .github/workflows/deploy.yml via remote-deploy.sh).
+#
+# All three join the shared Docker network "edge" (created by deploy/infra/setup-infra.sh), where Caddy reaches the
+# api as "aviation-api:8000" and the services send traces to "jaeger:4318". Nothing is published on the VM.
+# MongoDB and RabbitMQ are external; settings come from .env (template: .env.prod.example). See deploy/README.md.
+name: aviation
+
+x-backend: &backend
+  env_file: .env
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  api:
+    <<: *backend
+    image: ghcr.io/sathishkottravel/aviation-telemetry-service/api:${IMAGE_TAG:?set IMAGE_TAG}
+    environment:
+      OTEL_SERVICE_NAME: flight-telemetry-api
+      PRODUCER_URL: http://producer:8001
+    networks:
+      default:
+      edge:
+        aliases: [aviation-api]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    <<: *backend
+    image: ghcr.io/sathishkottravel/aviation-telemetry-service/worker:${IMAGE_TAG:?set IMAGE_TAG}
+    environment:
+      OTEL_SERVICE_NAME: flight-telemetry-worker
+    networks: [default, edge]
+
+  producer:
+    <<: *backend
+    image: ghcr.io/sathishkottravel/aviation-telemetry-service/producer:${IMAGE_TAG:?set IMAGE_TAG}
+    environment:
+      OTEL_SERVICE_NAME: flight-telemetry-producer
+    networks: [default, edge]   # edge only for tracing; Caddy doesn't route to the producer
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+networks:
+  edge:
+    external: true

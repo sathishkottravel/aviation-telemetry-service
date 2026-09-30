@@ -48,6 +48,7 @@ services:
       <<: *service-env
       OTEL_SERVICE_NAME: flight-telemetry-api
       PRODUCER_URL: http://producer:8001
+      API_TOKEN: ${API_TOKEN:-}
     ports:
       - "8000:8000"
     depends_on:
