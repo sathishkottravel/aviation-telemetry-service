@@ -555,8 +555,9 @@ The backend runs on an Oracle Always Free VM (ARM). Every push to `main` runs
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 1. unit tests
 2. ARM64 images pushed to GHCR, tagged with the commit SHA
-3. SSH deploy with healthchecks and automatic rollback
-4. smoke test
+3. deploy over SSH, with healthchecks, automatic rollback and a smoke test. **This step is currently off** (repository
+   variable `DEPLOY_ENABLED`). Deploys are done by hand on the VM with `./deploy/deploy.sh pull` (CI images) or `build` (build on the VM); see
+   [deploy/README.md → Manual deploy](deploy/README.md#manual-deploy).
 
 ```
 Internet ─► Caddy (your /etc/caddy, in Docker) ─┬─ jaeger.* / otel.* ─► jaeger (Docker)
