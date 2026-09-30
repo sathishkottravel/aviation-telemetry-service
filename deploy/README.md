@@ -15,18 +15,15 @@ push to main ─► test (uv run pytest)
 ## What runs where
 
 ```
-Internet ─► Caddy (shared, already on the VM) ─┬─ jaeger.sathishkottravel.com ─► Jaeger UI            (unchanged)
-                                               ├─ otel.sathishkottravel.com   ─► OTLP + token        (unchanged, other projects)
-                                               └─ api.sathishkottravel.com    ─► aviation-api:8000   (this repo)
-
-Docker network "edge" (external): caddy, jaeger, api, worker, producer
-  api / worker / producer ──OTLP http──► jaeger:4318  (internal)
-  api ──► producer:8001                               (internal only; the producer is not routed by Caddy)
-  all ──► MongoDB Atlas, CloudAMQP                    (external)
+Internet ─► Caddy (Docker, host network, your /etc/caddy) ─┬─ jaeger.* / otel.* / your other sites   (unchanged)
+                                                           └─ api.sathishkottravel.com ─► localhost:8000
+api (127.0.0.1:8000) ──► producer:8001    (internal only; not routed by Caddy)
+api / worker / producer ──► MongoDB Atlas, CloudAMQP, and traces to https://otel.sathishkottravel.com (token)
 ```
 
-Caddy and Jaeger are shared VM infrastructure and are **not** managed by this repo; deploys never restart them.
-This repo deploys only the three backend services (`deploy/docker-compose.prod.yml`, compose project `aviation`).
+Caddy and your Jaeger are **not** managed by this repo, and deploys never restart them. This repo deploys only the
+three backend services (`deploy/docker-compose.prod.yml`, compose project `aviation`). The `api` listens on
+`127.0.0.1:8000`, reachable only from the VM itself, so it's exposed only through Caddy.
 
 Public API surface (`https://api.sathishkottravel.com`):
 
@@ -41,19 +38,13 @@ Public API surface (`https://api.sathishkottravel.com`):
 
 Do these before merging the PR that adds the workflow: merging triggers the first deploy.
 
-### 1. Shared infrastructure: Caddy, Jaeger, and the `edge` network
-Set up the shared stack in [`deploy/infra/`](infra/README.md) on the VM. After you copy your site files into
-`/opt/infra/sites/`, one script does the rest: `sudo ./setup-infra.sh`. It covers:
-- DNS for `api.sathishkottravel.com`, next to `jaeger.*` and `otel.*`
-- opening ports 80 and 443 in Oracle's Security List and the VM's own firewall
-- replacing your current Caddy and Jaeger
-- `docker network create edge`
-- copying [`caddy/api.caddy`](caddy/api.caddy) into `/opt/infra/sites/`
+### 1. Caddy
+- Add a DNS `A` record for `api.sathishkottravel.com` pointing to the VM.
+- Add the block from [`caddy/api.caddy`](caddy/api.caddy) to your Caddyfile: `api.sathishkottravel.com { reverse_proxy localhost:8000 }`.
+- To run Caddy in Docker with your existing config, follow [`infra/README.md`](infra/README.md): a single
+  `sudo ./setup-caddy.sh`. A Caddy installed on the host works the same way; just reload it.
 
-Afterwards, `https://api.sathishkottravel.com` returns 502 until the first backend deploy. That's expected.
-
-The backend sends traces to `http://jaeger:4318` over `edge` (`OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`), not through
-`otel.*`.
+`https://api.sathishkottravel.com` returns 502 until the first backend deploy. That's expected.
 
 ### 2. Deploy user and folder
 ```sh
@@ -65,7 +56,7 @@ sudo -u deploy install -d -m 700 /home/deploy/.ssh
 # Put aviation-deploy.pub into /home/deploy/.ssh/authorized_keys (mode 600, owned by deploy).
 ```
 Password SSH logins should be off (`PasswordAuthentication no`); `fail2ban` is recommended.
-The deploy uses `docker compose`; `setup-infra.sh` (step 1) already installs it if it's missing.
+The deploy uses `docker compose`. On Ubuntu's own Docker, install it with `sudo apt install -y docker-compose-v2`.
 
 ### 3. Production settings
 ```sh

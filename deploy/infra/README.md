@@ -1,295 +1,68 @@
-# Shared VM infrastructure: Caddy + Jaeger
+# Caddy in Docker on the VM
 
-This folder is a sample stack for the Oracle VM that you run **by hand**. It is not deployed by GitHub Actions, and
-backend deploys never restart it.
+Runs your **existing** Caddy config (`/etc/caddy`) in a Docker container, in place of the Caddy installed on the host.
+Your site files, your Jaeger and `otel.sathishkottravel.com` stay exactly as they are.
 
-| Service | What it does |
-| ------- | ------------ |
-| **Caddy** (`caddy:2`) | HTTPS for every hostname on the VM, with automatic Let's Encrypt certificates |
-| **Jaeger v2 all-in-one** (`jaegertracing/jaeger:2.21.0`) | Receives OTLP traces and serves the Jaeger UI, with persistent Badger storage (72 h retention) |
+- **Host networking:** the container uses `network_mode: host`, so `localhost` inside it is the VM, and every
+  `reverse_proxy localhost:PORT` keeps working.
+- **Certificates:** it mounts the host Caddy's data directory, so the existing certificates are reused.
+
+This is set up once by hand; the backend's GitHub workflow never touches it.
+
+## Steps
+
+**1. Add the API site to your Caddyfile** (`/etc/caddy/Caddyfile`, or any file it imports):
 
 ```
-Internet ─► Caddy :80/:443 ─┬─ jaeger.sathishkottravel.com ─► jaeger:16686    Jaeger UI (public, read-only)
-                            ├─ otel.sathishkottravel.com   ─► jaeger:4318 / :4317 (gRPC)
-                            │                                 OTLP ingest, requires Authorization: Bearer <OTEL_INGEST_TOKEN>
-                            └─ sites/*.caddy               ─► per-project sites, e.g. api.sathishkottravel.com → aviation-api:8000
-
-Docker network "edge" (external, shared): caddy, jaeger, and each project's containers
-  project containers ──OTLP──► http://jaeger:4318  (internal; no token needed, never leaves the VM)
+api.sathishkottravel.com {
+	reverse_proxy localhost:8000
+}
 ```
 
-The aviation backend (`deploy/docker-compose.prod.yml`, deployed by the GitHub workflow) joins `edge`. It is served
-through `sites/api.caddy` and sends its traces to `jaeger` internally. Other projects can keep sending traces to
-`otel.sathishkottravel.com` with the token.
+This is the same as `deploy/caddy/api.caddy`. The backend's `api` container listens on `127.0.0.1:8000`. Also add a DNS
+`A` record for `api.sathishkottravel.com` pointing to the VM.
 
-## Files
-
-| File | Purpose |
-| ---- | ------- |
-| `setup-infra.sh` | One script that installs, migrates and verifies everything; see below |
-| `docker-compose.yml` | Caddy, Jaeger, and a one-shot `jaeger-init` that makes the data volume writable for Jaeger's non-root user |
-| `Caddyfile` | Managed by the script: global options (importing `global.caddy`), the Jaeger UI site, the token-protected OTLP site, and `import sites/*.caddy` |
-| `global.caddy` (created on the VM) | Your global options, e.g. `email you@example.com`. Created empty and never overwritten |
-| `jaeger-config.yaml` | Jaeger v2: OTLP receivers on 4317/4318, Badger storage with a 72 h TTL, UI on 16686, health on 13133 |
-| `.env.example` | `JAEGER_DOMAIN`, `OTEL_DOMAIN`, `OTEL_INGEST_TOKEN` |
-| `sites/` | One `*.caddy` file per project |
-
-## 1. Prerequisites (outside the VM)
-
-- **DNS `A` records** pointing to the VM's public IP: `jaeger.sathishkottravel.com`, `otel.sathishkottravel.com` and
-  `api.sathishkottravel.com`.
-- **Oracle Console → VCN → Security List:** ingress rules for TCP 80 and 443, and UDP 443 for HTTP/3 (optional).
-  This is the one firewall the script can't change from inside the VM.
-
-Everything else is done by the script, including installing Docker if it's missing and opening the VM's own firewall.
-
-## 2. Copy your site files (the only manual step)
+**2. Switch to the container:**
 
 ```sh
-git clone https://github.com/sathishkottravel/aviation-telemetry-service.git ~/aviation-telemetry-service
-sudo install -d /opt/infra/sites
-sudo cp ~/aviation-telemetry-service/deploy/caddy/api.caddy /opt/infra/sites/
-```
-
-Then move **every other site block** from your current `/etc/caddy/Caddyfile` into its own
-`/opt/infra/sites/<name>.caddy`. `jaeger.*` and `otel.*` are already in the stack's `Caddyfile`, so skip those. Change
-upstreams that point to the VM itself:
-
-| In `/etc/caddy/Caddyfile` (host) | In `/opt/infra/sites/<name>.caddy` (container) |
-| -------------------------------- | ---------------------------------------------- |
-| `reverse_proxy localhost:3000` | `reverse_proxy host.docker.internal:3000` |
-| `reverse_proxy 127.0.0.1:3000` | `reverse_proxy host.docker.internal:3000` |
-| `reverse_proxy some-container:3000` (published port) | attach that container to `edge` and use its name, or keep `host.docker.internal:<published port>` |
-| `root * /var/www/site` + `file_server` | also mount the folder into the Caddy container (`- /var/www/site:/var/www/site:ro` in `docker-compose.yml`) |
-
-- **`host.docker.internal`** is the VM itself, as seen from the Caddy container.
-- **Services that listen only on `127.0.0.1`** can't be reached from a container. Make them listen on `0.0.0.0` (or on
-  the Docker bridge address `172.17.0.1`). Keep their ports closed in the VM firewall and the Security List.
-- **OTLP token header:** the stack's `otel.*` site expects `Authorization: Bearer <token>`. If your old block checked a
-  different header, adjust the `@authorized` matcher in `deploy/infra/Caddyfile` before running the script.
-
-> **Rules for site files.** Caddy doesn't read `sites/*.caddy` as separate configs: the stack's `Caddyfile` ends with
-> `import sites/*.caddy`, which pastes every site file into it. So:
-> - **Site blocks and snippets only.** No global options block (`{ … }` without a hostname). Put global options such as
->   `email you@example.com` in `/opt/infra/global.caddy`, without braces. The script creates that file and never
->   overwrites it.
-> - **No `jaeger.*` / `otel.*` blocks.** The stack's `Caddyfile` already provides both.
-> - **Each hostname in one file only.**
->
-> `setup-infra.sh` checks this before doing anything and names the file and line of each conflict.
-
-## 3. Run the setup script
-
-```sh
+git clone --branch feature/vm-deploy https://github.com/sathishkottravel/aviation-telemetry-service.git ~/aviation-telemetry-service
 cd ~/aviation-telemetry-service/deploy/infra
-sudo ./setup-infra.sh --otel-token '<your existing OTLP token>'
+sudo ./setup-caddy.sh
 ```
 
-It asks before installing Docker or stopping anything. Add `--yes` to skip the questions. Without `--otel-token`, it
-asks for the token; an empty answer generates a new one, and then your other projects need updating. Domains default
-to `jaeger.sathishkottravel.com` / `otel.sathishkottravel.com` (change them with `--jaeger-domain` / `--otel-domain`).
+The script:
+1. Installs Docker Compose v2 if it's missing.
+2. Validates `/etc/caddy/Caddyfile` inside the container **before changing anything**.
+3. Stops and disables the host Caddy (systemd).
+4. Starts the container and checks that port 80 answers.
 
-What it does, in order (it stops at the first problem):
+Keep this folder: the container is managed from here (`docker compose ...`).
 
-1. **Checks** it's running as root and `curl` is present, installs Docker if it's missing (with the official
-   `get.docker.com` script), and installs Docker Compose v2 if `docker compose` is missing (see
-   [Troubleshooting](#troubleshooting)).
-2. **Opens the VM firewall** for 80/tcp, 443/tcp and 443/udp. It uses `firewalld` if that's active, otherwise
-   `iptables` (inserted before Oracle's REJECT rule, never duplicated, saved with `netfilter-persistent`).
-3. **Copies the configs** to `/opt/infra`, backing up any changed file to `backups/`. It creates the `edge` network.
-   Your `.env` and `sites/*.caddy` files are never overwritten.
-4. **Writes `/opt/infra/.env`** (mode 600) with the domains and token.
-5. **Lists your site files,** and asks whether to continue if there are none.
-6. **Validates** the Caddyfile together with your sites. At this point **nothing has been stopped yet**.
-7. **Starts Jaeger** (it publishes no ports, so it runs next to the old setup) and waits until it's healthy.
-8. **Stops the old setup.** That's the host services `caddy`, `jaeger` and `jaeger-all-in-one` (stopped and disabled),
-   plus any container outside this stack that publishes 80/443 or runs a Jaeger image. Those containers are
-   **stopped, not removed.** Everything is recorded in `/opt/infra/.setup-state`. If some other process still holds
-   80/443, it rolls back and stops.
-9. **Starts Caddy** and reloads it, so re-runs pick up changed site files. If Caddy fails to start, it rolls back.
-10. **Verifies over HTTPS**, retrying while certificates are issued:
-    - the Jaeger UI returns 200
-    - OTLP returns 401 without the token and 200 with it
-
-    If the UI doesn't come up, it points at the likely causes (DNS, the Security List) and offers to roll back.
-11. **Prints a summary** with the URLs, the rollback command, and how to remove the old setup for good.
-
-| Command | Effect |
-| ------- | ------ |
-| `sudo ./setup-infra.sh --rollback` | Stops the new Caddy; restarts the recorded old containers; re-enables and starts the host Caddy/Jaeger services |
-| `sudo ./setup-infra.sh` (again) | Safe to re-run: refreshes the configs and reloads Caddy. Use it after changing `sites/*.caddy` or pulling a newer repo |
-| `sudo ./setup-infra.sh --help` | All options (`--yes`, `--rollback`, `--jaeger-domain`, `--otel-domain`, `--otel-token`, `--infra-dir`, `--no-firewall`) |
-
-Once everything works, remove the old setup for good. The script's summary prints the exact `docker rm` command for
-the old containers. For the host Caddy, run `sudo apt remove caddy`; it's already stopped and disabled.
-
-## 4. Check
+**3. If anything is wrong,** go back to the host Caddy:
 
 ```sh
-curl -sI https://jaeger.sathishkottravel.com | head -1                                            # HTTP/2 200
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://otel.sathishkottravel.com/v1/traces      # 401
-curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/x-protobuf' https://otel.sathishkottravel.com/v1/traces           # 200
-docker network inspect edge --format '{{range .Containers}}{{.Name}} {{end}}'                     # infra-caddy-1 infra-jaeger-1
+sudo ./setup-caddy.sh --rollback
 ```
 
-`https://api.sathishkottravel.com` returns **502 until the backend is deployed**, which is expected. Then continue
-with [the backend runbook](../README.md).
+## Day to day
 
-Exporter settings for other projects:
+| Task | Command (in this folder) |
+| ---- | ------------------------ |
+| Reload after editing `/etc/caddy/Caddyfile` | `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile` |
+| Logs | `docker compose logs -f` |
+| Update Caddy | `docker compose pull && docker compose up -d` |
+| Remove the host Caddy package for good | `sudo apt remove caddy` (once you're happy) |
 
-| Protocol | Endpoint | Headers |
-| -------- | -------- | ------- |
-| OTLP/HTTP | `OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.sathishkottravel.com` with `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` | `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<token>` |
-| OTLP/gRPC | `OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.sathishkottravel.com:443` | same |
+## Notes
 
-## 5. Operations
-
-| Task | Command (in `/opt/infra`) |
-| ---- | ------------------------- |
-| Add or change a project site | put a `*.caddy` file in `sites/`, then re-run `sudo ./setup-infra.sh` (validates, then reloads without a restart), or reload directly: `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile` (a bad file is rejected and the old config keeps running) |
-| Change the Caddyfile | edit it, then run the same reload |
-| Change `.env` (domains, token) | `docker compose up -d` (recreates Caddy; certificates are kept in the `caddy-data` volume) |
-| Update images | bump the tags in `docker-compose.yml`, then `docker compose pull && docker compose up -d` |
-| Logs | `docker compose logs -f caddy` / `jaeger` (rotated at 3 × 10 MB) |
-| Jaeger disk usage | `docker system df -v \| grep jaeger-data`. Traces older than 72 h are deleted automatically; change `ttl.spans` in `jaeger-config.yaml` and `docker compose up -d jaeger` to tune it |
-| Wipe all traces | `docker compose down jaeger && docker volume rm infra_jaeger-data && docker compose up -d` |
-
-The stack keeps running when the backend is redeployed or removed. Caddy only proxies to `aviation-api` while that
-container exists.
-
+- **Files outside `/etc/caddy`:** if your Caddyfile uses other host paths (e.g. `root * /var/www/site`, log files),
+  add them as volume lines in `docker-compose.yml`.
+- **Environment variables** (`{$VAR}` in your Caddyfile): if the old systemd unit set them (see
+  `systemctl cat caddy`), put them in `caddy.env` in this folder. It's picked up automatically.
+- **A different certificates path:** if your host Caddy stored its data somewhere other than
+  `/var/lib/caddy/.local/share/caddy`, run with `CADDY_DATA_DIR=<path> sudo -E ./setup-caddy.sh`.
 
 ## Troubleshooting
 
-**`ambiguous site definition: jaeger.sathishkottravel.com`** (or another hostname)
-
-The same hostname is defined twice. Usually a `jaeger.*` or `otel.*` block was copied from the old
-`/etc/caddy/Caddyfile` into `sites/`, where it duplicates the stack's own. Delete it from the site file, or keep a
-hostname in one site file only.
-
-**`server block without any key is global configuration, and if used, it must be first`**
-
-A site file contains a global options block (`{ … }` with no hostname), and imported files end up at the end of the
-config. Move the options (without the braces) into `/opt/infra/global.caddy`, and delete the block from the site file.
-
-After fixing either one, re-run `sudo ./setup-infra.sh`. Nothing was stopped, so the old setup kept serving.
-
-**`Unable to locate package docker-compose-plugin`** / **`docker: 'compose' is not a docker command`**
-
-Your Docker comes from Ubuntu's own `docker.io` package. `docker-compose-plugin` only exists in Docker's apt repository;
-Ubuntu ships the same Compose v2 plugin as `docker-compose-v2`. `setup-infra.sh` installs it automatically. By hand:
-
-```sh
-sudo apt update && sudo apt install -y docker-compose-v2     # enable 'universe' first if needed: sudo add-apt-repository universe
-docker compose version
-```
-
-Don't add Docker's repository just for `docker-compose-plugin` next to Ubuntu's `docker.io`; the two sets of packages
-conflict. If no package works, install the official plugin binary (for ARM VMs, `uname -m` prints `aarch64`):
-
-```sh
-sudo mkdir -p /usr/local/lib/docker/cli-plugins
-sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)"   -o /usr/local/lib/docker/cli-plugins/docker-compose
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-```
-
-**The Jaeger UI doesn't answer after the switch.** Check that the DNS records point to this VM and that ports 80 and 443
-are open in the Oracle Security List. Then check `docker compose logs caddy` for certificate errors. Roll back any time
-with `sudo ./setup-infra.sh --rollback`.
-
-## Appendix: doing it by hand
-
-The script automates these steps. They're kept here for reference.
-
-### A. Prepare (no downtime)
-
-These steps assume your current Caddy is installed **directly on the VM** (not in Docker), usually as the systemd
-service `caddy` reading `/etc/caddy/Caddyfile`.
-
-#### Inspect what runs today
-```sh
-systemctl status caddy --no-pager      # host Caddy service (or: ps aux | grep caddy)
-cat /etc/caddy/Caddyfile               # plus any files it imports
-docker ps                              # is the current Jaeger a container?
-sudo ss -ltnp | grep -E ':(80|443|4317|4318|16686)\b'   # who holds these ports
-```
-Note your current **OTLP token** and how the other project sends it. The new `otel.*` site expects
-`Authorization: Bearer <token>`; if your old block checked something else, adjust the `@authorized` matcher in the
-`Caddyfile`.
-
-#### Put the stack in place
-```sh
-docker network create edge                        # once; shared by every stack on the VM
-sudo install -d -o $USER /opt/infra
-# copy the contents of deploy/infra/ to /opt/infra, e.g. from your machine:
-#   scp -r deploy/infra/* deploy/infra/.env.example <user>@<vm>:/opt/infra/
-cd /opt/infra
-cp .env.example .env && chmod 600 .env            # set the domains and OTEL_INGEST_TOKEN (your existing token)
-cp <repo>/deploy/caddy/api.caddy sites/           # the aviation API site (api.sathishkottravel.com → aviation-api:8000)
-```
-
-#### Move your other sites from the host Caddyfile
-The stack's `Caddyfile` already covers `jaeger.*` and `otel.*`. Put **every other site block** from
-`/etc/caddy/Caddyfile` into its own file in `/opt/infra/sites/`, and change upstreams that point to the VM itself:
-
-| In `/etc/caddy/Caddyfile` (host) | In `/opt/infra/sites/<name>.caddy` (container) |
-| -------------------------------- | ---------------------------------------------- |
-| `reverse_proxy localhost:3000` | `reverse_proxy host.docker.internal:3000` |
-| `reverse_proxy 127.0.0.1:3000` | `reverse_proxy host.docker.internal:3000` |
-| `reverse_proxy some-container:3000` (published port) | attach that container to `edge` and use its name, or keep `host.docker.internal:<published port>` |
-| `root * /var/www/site` + `file_server` | also mount the folder into the Caddy container (`- /var/www/site:/var/www/site:ro` in `docker-compose.yml`) |
-
-`host.docker.internal` is the VM itself, as seen from the Caddy container (`extra_hosts` in `docker-compose.yml`). A
-service on the VM that listens **only on `127.0.0.1` can't be reached from a container**. Make it listen on `0.0.0.0`
-(or on the Docker bridge address `172.17.0.1`). The VM firewall and Oracle's Security List keep that port closed to
-the internet, as long as you don't open it there.
-
-#### Validate before switching
-```sh
-cd /opt/infra
-docker run --rm --env-file .env -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/sites:/etc/caddy/sites:ro" \
-  caddy:2 caddy validate --config /etc/caddy/Caddyfile        # must end with "Valid configuration"
-docker compose up -d jaeger                                   # Jaeger publishes no ports, so it can start now
-docker compose ps                                             # jaeger (healthy); jaeger-init exited 0
-```
-
-### B. Switch over (a short outage while ports 80/443 change hands)
-
-```sh
-sudo systemctl disable --now caddy          # stop the host Caddy and keep it from starting at boot
-cd /opt/infra && docker compose up -d       # starts the Caddy container on 80/443
-docker compose logs -f caddy                # wait for "certificate obtained successfully" for each domain
-```
-Then stop the old Jaeger, which the stack's Jaeger replaces. If it's a container, run
-`docker stop <old-jaeger> && docker rm <old-jaeger>`; if it runs on the host, stop its service or process. Traces in
-the old Jaeger aren't migrated.
-
-**Rollback** (your old config and certificates were never touched):
-```sh
-cd /opt/infra && docker compose stop caddy && sudo systemctl enable --now caddy
-```
-
-**Later, once everything works:** `sudo apt remove caddy`, or leave the package installed but disabled. The container
-issues and stores its own certificates in the `caddy-data` volume.
-
-### C. VM firewall
-```sh
-sudo iptables -I INPUT 6 -p tcp -m multiport --dports 80,443 -j ACCEPT
-sudo iptables -I INPUT 6 -p udp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
-# Oracle Linux: sudo firewall-cmd --permanent --add-service=http --add-service=https && sudo firewall-cmd --reload
-```
-
-## Alternative: keep Caddy on the host (not recommended)
-
-If you'd rather keep the Caddy installed on the VM, it can't reach containers by name, so publish their ports on
-loopback and point the host Caddyfile at them:
-
-1. **Stack Jaeger:** add `ports: ["127.0.0.1:16686:16686", "127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]` to `jaeger`.
-   Run only Jaeger: `docker compose up -d jaeger`.
-2. **Backend API:** add `ports: ["127.0.0.1:8000:8000"]` to `api` in `deploy/docker-compose.prod.yml`.
-3. **Host Caddyfile:** `reverse_proxy 127.0.0.1:16686` for the UI, and `127.0.0.1:4318` / `h2c://127.0.0.1:4317` for
-   OTLP (keep your token check). For the API, use `reverse_proxy 127.0.0.1:8000`.
-
-Everything else stays the same; the backend still sends traces to `jaeger` over `edge`. The downsides: Caddy's config
-stays outside the repo and is managed by hand, and ports have to be coordinated per project.
+**`Unable to locate package docker-compose-plugin`**: on Ubuntu's own Docker (`docker.io`), the package is called
+`docker-compose-v2`. The script installs it; by hand, run `sudo apt install -y docker-compose-v2`.

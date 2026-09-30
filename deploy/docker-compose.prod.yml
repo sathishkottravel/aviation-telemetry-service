@@ -1,9 +1,8 @@
 # Backend services on the production VM (deployed by .github/workflows/deploy.yml via remote-deploy.sh).
 #
-# Caddy and Jaeger are shared VM infrastructure outside this repo. They join the external "edge" network,
-# where Caddy reaches the API as "aviation-api:8000" and the services send traces to Jaeger internally
-# (OTEL_EXPORTER_OTLP_ENDPOINT in .env, e.g. http://jaeger:4318). No ports are published.
-# MongoDB and RabbitMQ are external (MONGODB_URI, RABBITMQ_URL in .env). See deploy/README.md.
+# The api listens on 127.0.0.1:8000 only; the VM's Caddy (deploy/infra) proxies api.sathishkottravel.com to it.
+# worker and producer publish nothing. MongoDB, RabbitMQ and the trace ingest (otel.*) are external; all
+# settings come from .env on the VM (template: .env.prod.example). See deploy/README.md.
 name: aviation
 
 x-backend: &backend
@@ -15,22 +14,15 @@ x-backend: &backend
       max-size: "10m"
       max-file: "3"
 
-x-otel: &otel
-  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-
 services:
   api:
     <<: *backend
     image: ghcr.io/sathishkottravel/aviation-telemetry-service/api:${IMAGE_TAG:?set IMAGE_TAG}
     environment:
-      <<: *otel
       OTEL_SERVICE_NAME: flight-telemetry-api
       PRODUCER_URL: http://producer:8001
-    networks:
-      default:
-      edge:
-        # A project-specific name on the shared network, so it can't clash with other projects' services.
-        aliases: [aviation-api]
+    ports:
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
@@ -42,25 +34,16 @@ services:
     <<: *backend
     image: ghcr.io/sathishkottravel/aviation-telemetry-service/worker:${IMAGE_TAG:?set IMAGE_TAG}
     environment:
-      <<: *otel
       OTEL_SERVICE_NAME: flight-telemetry-worker
-    networks: [default, edge]
 
   producer:
     <<: *backend
     image: ghcr.io/sathishkottravel/aviation-telemetry-service/producer:${IMAGE_TAG:?set IMAGE_TAG}
     environment:
-      <<: *otel
       OTEL_SERVICE_NAME: flight-telemetry-producer
-    # Only on "edge" for tracing; its REST endpoints are reached by the API over "default", never via Caddy.
-    networks: [default, edge]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 6
       start_period: 20s
-
-networks:
-  edge:
-    external: true

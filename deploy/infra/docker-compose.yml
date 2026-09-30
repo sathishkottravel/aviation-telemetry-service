@@ -1,74 +1,30 @@
-# Shared VM infrastructure: Caddy (HTTPS for every project) + Jaeger v2 all-in-one (traces).
-# Run by hand on the VM from /opt/infra; not deployed by GitHub Actions. See README.md in this folder.
+# Caddy in Docker, running your existing /etc/caddy config unchanged. Set up with ./setup-caddy.sh (see README.md).
 #
-# Both join the external Docker network "edge" (create it once: docker network create edge), which project
-# stacks such as the aviation backend (deploy/docker-compose.prod.yml) join too.
-name: infra
-
-x-logging: &logging
-  driver: json-file
-  options:
-    max-size: "10m"
-    max-file: "3"
+# network_mode: host → inside the container "localhost" is the VM itself, so every `reverse_proxy localhost:PORT`
+# in your Caddyfile keeps working as it did with the Caddy installed on the host.
+name: caddy
 
 services:
-  # One-shot: the Jaeger image runs as uid 10001, but a new named volume is owned by root.
-  jaeger-init:
-    image: busybox:1.37
-    command: ["chown", "-R", "10001:0", "/badger"]
-    volumes:
-      - jaeger-data:/badger
-    restart: "no"
-
-  jaeger:
-    image: jaegertracing/jaeger:2.21.0
-    command: ["--config", "/etc/jaeger/config.yaml"]
-    volumes:
-      - ./jaeger-config.yaml:/etc/jaeger/config.yaml:ro
-      - jaeger-data:/badger
-    depends_on:
-      jaeger-init:
-        condition: service_completed_successfully
-    networks:
-      edge:
-        # Projects send traces to http://jaeger:4318 (HTTP) or jaeger:4317 (gRPC) over "edge".
-        aliases: [jaeger]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:13133/status"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-    logging: *logging
-
   caddy:
     image: caddy:2
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
-    env_file: .env
-    # Lets site files proxy to services running directly on the VM: reverse_proxy host.docker.internal:<port>
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./global.caddy:/etc/caddy/global.caddy:ro   # your global options; created empty by setup-infra.sh
-      - ./sites:/etc/caddy/sites:ro
-      - caddy-data:/data        # certificates; keep this volume to avoid re-issuing on every recreate
-      - caddy-config:/config
-    depends_on:
-      - jaeger
-    networks: [edge]
+    network_mode: host
     restart: unless-stopped
-    logging: *logging
-
-networks:
-  edge:
-    external: true
+    env_file:
+      # Optional: environment variables your Caddyfile uses ({$VAR}), e.g. copied from the old systemd unit.
+      - path: ./caddy.env
+        required: false
+    volumes:
+      - /etc/caddy:/etc/caddy:ro
+      # Reuse the host Caddy's certificates and ACME account, so nothing is re-issued.
+      - ${CADDY_DATA_DIR:-/var/lib/caddy/.local/share/caddy}:/data/caddy
+      - caddy-config:/config
+      # Add a line for any other host path your Caddyfile uses, e.g.:
+      # - /var/www:/var/www:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
-  jaeger-data:
-  caddy-data:
   caddy-config:

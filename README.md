@@ -551,30 +551,33 @@ The local Jaeger stays the default; unset the three variables to go back to it.
 
 ## Production deployment (Oracle VM)
 
-The backend runs on an Oracle Always Free VM (ARM) next to the VM's shared Caddy and Jaeger all-in-one. Every push to
-`main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): unit tests → ARM64 images to GHCR (tagged
-with the commit SHA) → SSH deploy with healthchecks and automatic rollback → smoke test.
+The backend runs on an Oracle Always Free VM (ARM). Every push to `main` runs
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+1. unit tests
+2. ARM64 images pushed to GHCR, tagged with the commit SHA
+3. SSH deploy with healthchecks and automatic rollback
+4. smoke test
 
 ```
-Internet ─► Caddy (shared) ─┬─ jaeger.sathishkottravel.com ─► Jaeger UI
-                            ├─ otel.sathishkottravel.com   ─► OTLP ingest (token; other projects)
-                            └─ api.sathishkottravel.com    ─► api  (GraphQL + REST, API_TOKEN)
-api / worker / producer ──internal OTLP──► Jaeger;  producer is internal only;  MongoDB Atlas + CloudAMQP are external
+Internet ─► Caddy (your existing config, in Docker) ─┬─ jaeger.* / otel.* / other sites   (unchanged)
+                                                     └─ api.sathishkottravel.com ─► localhost:8000 (GraphQL + REST, API_TOKEN)
+api / worker / producer ──► MongoDB Atlas, CloudAMQP; traces → https://otel.sathishkottravel.com
 ```
 
-- `deploy/docker-compose.prod.yml`: the three services from GHCR images, no published ports, on the shared `edge`
-  network; settings from the VM-only `/opt/aviation/.env` (template: `deploy/.env.prod.example`).
-- `deploy/remote-deploy.sh`: `up --wait` on healthchecks; on failure, back to the previous tag and a failed job.
-- `deploy/caddy/api.caddy`: the one site block added to the VM's Caddyfile.
-- `deploy/infra/`: a sample stack for the VM's shared **Caddy + Jaeger all-in-one** on the `edge` network, run by
-  hand (not by the workflow) with a single `sudo ./setup-infra.sh`. It covers the Jaeger UI, token-protected OTLP
-  ingest, per-project site files, and migrating from a Caddy on the host. See [deploy/infra/README.md](deploy/infra/README.md).
-- Images install exactly the versions in `uv.lock` (`uv export` + `pip install --require-hashes`), locally and in CI.
+- **`deploy/docker-compose.prod.yml`:** the three services from GHCR images. The api listens on `127.0.0.1:8000` only,
+  and the producer is internal. Settings come from the VM-only `/opt/aviation/.env` (template:
+  `deploy/.env.prod.example`).
+- **`deploy/remote-deploy.sh`:** `up --wait` on healthchecks. On failure, it goes back to the previous tag and the job
+  fails.
+- **`deploy/caddy/api.caddy`:** the one site block to add to the VM's Caddyfile.
+- **`deploy/infra/`:** optional. It runs Caddy in Docker with your existing `/etc/caddy` config
+  (`sudo ./setup-caddy.sh`); see [deploy/infra/README.md](deploy/infra/README.md).
+- **Images** install exactly the versions in `uv.lock` (`uv export` + `pip install --require-hashes`), locally and in CI.
 
-One-time setup (DNS, `edge` network, Caddy block, deploy user, `.env`, GitHub environment and secrets, GHCR
-visibility) and operations (rollback, logs): **[deploy/README.md](deploy/README.md)**. To run the e2e suite against
-production: `E2E_API_URL=https://api.sathishkottravel.com E2E_API_TOKEN=... uv run pytest -m e2e` (the seed step
-needs `E2E_MONGODB_URI` for Atlas).
+One-time setup (Caddy block, deploy user, `.env`, GitHub environment and secrets, GHCR visibility) and operations
+(rollback, logs) are in **[deploy/README.md](deploy/README.md)**. To run the e2e suite against production:
+`E2E_API_URL=https://api.sathishkottravel.com E2E_API_TOKEN=... uv run pytest -m e2e` (the seed step needs
+`E2E_MONGODB_URI` for Atlas).
 
 ## Status
 
