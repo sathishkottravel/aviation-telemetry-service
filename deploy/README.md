@@ -41,36 +41,20 @@ Public API surface (`https://api.sathishkottravel.com`):
 
 Do these before merging the PR that adds the workflow: merging triggers the first deploy.
 
-### 1. DNS
-Add an `A` record `api.sathishkottravel.com` → the VM's public IP (like the existing `jaeger`/`otel` records).
+### 1. Shared infrastructure: Caddy, Jaeger, and the `edge` network
+Set up the sample stack in [`deploy/infra/`](infra/README.md) on the VM by hand. It covers:
+- DNS for `api.sathishkottravel.com`, next to `jaeger.*` and `otel.*`
+- opening ports 80 and 443 in Oracle's Security List and the VM's own firewall
+- replacing your current Caddy and Jaeger
+- `docker network create edge`
+- copying [`caddy/api.caddy`](caddy/api.caddy) into `/opt/infra/sites/`
 
-### 2. Shared Docker network
-```sh
-docker network create edge
-```
-Attach the existing Caddy and Jaeger containers to it, in their compose file:
-```yaml
-services:
-  caddy:
-    networks: [default, edge]
-  jaeger:
-    networks:
-      default:
-      edge:
-        aliases: [jaeger]      # the name the backend uses: OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-networks:
-  edge:
-    external: true
-```
-then `docker compose up -d` there, or attach on the fly: `docker network connect --alias jaeger edge <jaeger-container>` and
-`docker network connect edge <caddy-container>`. Jaeger all-in-one must accept OTLP on 4318 (the default for v2 and recent v1).
+Afterwards, `https://api.sathishkottravel.com` returns 502 until the first backend deploy. That's expected.
 
-### 3. Caddy
-Add the site block from `deploy/caddy/api.caddy` to the VM's Caddyfile (paste it in, or `import` the file) and reload
-Caddy (e.g. `docker exec <caddy> caddy reload --config /etc/caddy/Caddyfile`). Caddy obtains the certificate itself.
-If Caddy runs on the host rather than in Docker, see the comment in `api.caddy`.
+The backend sends traces to `http://jaeger:4318` over `edge` (`OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`), not through
+`otel.*`.
 
-### 4. Deploy user and folder
+### 2. Deploy user and folder
 ```sh
 sudo useradd --create-home --shell /bin/bash deploy
 sudo usermod -aG docker deploy              # docker only; no sudo
@@ -81,7 +65,7 @@ sudo -u deploy install -d -m 700 /home/deploy/.ssh
 ```
 Password SSH logins should be off (`PasswordAuthentication no`); `fail2ban` is recommended.
 
-### 5. Production settings
+### 3. Production settings
 ```sh
 sudo -u deploy cp .env.prod.example /opt/aviation/.env   # copy the file from this folder
 sudo -u deploy chmod 600 /opt/aviation/.env
@@ -90,7 +74,7 @@ Fill in MongoDB Atlas, CloudAMQP (`amqps://`), `API_TOKEN` and `ADMIN_TOKEN` (tw
 workflow never overwrites `.env`. In **Atlas → Network Access**, allow the VM's public IP, and seed the navigation data
 once from your machine: `MONGODB_URI=<atlas-uri> uv run seed-db`.
 
-### 6. GitHub
+### 4. GitHub
 - **Settings → Environments → New environment `production`** (optionally add yourself as a required reviewer, so each
   deploy waits for approval).
 - Environment secrets:

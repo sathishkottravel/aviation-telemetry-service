@@ -1,0 +1,37 @@
+# Shared Caddy for the VM. Domains and the OTLP ingest token come from .env (see .env.example).
+# Per-project sites live in ./sites/*.caddy (mounted at /etc/caddy/sites) and are imported at the end.
+
+# Optional global options, e.g. an email for Let's Encrypt expiry notices:
+# {
+# 	email you@example.com
+# }
+
+# Jaeger UI: public, read-only.
+{$JAEGER_DOMAIN} {
+	reverse_proxy jaeger:16686
+}
+
+# OTLP ingest for other projects, protected with a bearer token:
+#   OTLP/HTTP  → POST https://{$OTEL_DOMAIN}/v1/traces    (exporter endpoint: https://{$OTEL_DOMAIN})
+#   OTLP/gRPC  → {$OTEL_DOMAIN}:443                        (exporter endpoint: https://{$OTEL_DOMAIN}:443)
+# Clients send the header "Authorization: Bearer <OTEL_INGEST_TOKEN>"
+# (OpenTelemetry SDKs: OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<token>).
+# If an existing client sends its token differently, change the @authorized matcher accordingly.
+{$OTEL_DOMAIN} {
+	@authorized header Authorization "Bearer {$OTEL_INGEST_TOKEN}"
+	@grpc path /opentelemetry.proto.collector.*
+
+	handle @authorized {
+		handle @grpc {
+			reverse_proxy h2c://jaeger:4317
+		}
+		handle /v1/* {
+			reverse_proxy jaeger:4318
+		}
+		respond 404
+	}
+	respond "Unauthorized" 401
+}
+
+# Project sites, e.g. api.caddy from the aviation-telemetry-service repo.
+import /etc/caddy/sites/*.caddy

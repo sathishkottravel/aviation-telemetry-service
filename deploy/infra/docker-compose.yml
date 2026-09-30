@@ -1,0 +1,70 @@
+# Shared VM infrastructure: Caddy (HTTPS for every project) + Jaeger v2 all-in-one (traces).
+# Run by hand on the VM from /opt/infra; not deployed by GitHub Actions. See README.md in this folder.
+#
+# Both join the external Docker network "edge" (create it once: docker network create edge), which project
+# stacks such as the aviation backend (deploy/docker-compose.prod.yml) join too.
+name: infra
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # One-shot: the Jaeger image runs as uid 10001, but a new named volume is owned by root.
+  jaeger-init:
+    image: busybox:1.37
+    command: ["chown", "-R", "10001:0", "/badger"]
+    volumes:
+      - jaeger-data:/badger
+    restart: "no"
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    volumes:
+      - ./jaeger-config.yaml:/etc/jaeger/config.yaml:ro
+      - jaeger-data:/badger
+    depends_on:
+      jaeger-init:
+        condition: service_completed_successfully
+    networks:
+      edge:
+        # Projects send traces to http://jaeger:4318 (HTTP) or jaeger:4317 (gRPC) over "edge".
+        aliases: [jaeger]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy-data:/data        # certificates; keep this volume to avoid re-issuing on every recreate
+      - caddy-config:/config
+    depends_on:
+      - jaeger
+    networks: [edge]
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  edge:
+    external: true
+
+volumes:
+  jaeger-data:
+  caddy-data:
+  caddy-config:
