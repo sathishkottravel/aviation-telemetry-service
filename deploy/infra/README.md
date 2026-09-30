@@ -1,47 +1,55 @@
-# Caddy in Docker on the VM
+# Caddy + Jaeger in Docker on the VM
 
-Runs your **existing** Caddy config (`/etc/caddy`) in a Docker container, in place of the Caddy installed on the host.
-Your site files, your Jaeger and `otel.sathishkottravel.com` stay exactly as they are.
-
-- **Host networking:** the container uses `network_mode: host`, so `localhost` inside it is the VM, and every
-  `reverse_proxy localhost:PORT` keeps working.
-- **Certificates:** it mounts the host Caddy's data directory, so the existing certificates are reused.
-
-This is set up once by hand; the backend's GitHub workflow never touches it.
-
-## Steps
-
-**1. Add the API site to your Caddyfile** (`/etc/caddy/Caddyfile`, or any file it imports):
+Runs **your own Caddy config** (`/etc/caddy`) and **Jaeger v2 all-in-one** as containers on a shared Docker network
+`edge`. The aviation backend joins the same network, so everything talks by name:
 
 ```
-api.sathishkottravel.com {
-	reverse_proxy localhost:8000
-}
+Docker network "edge"
+  caddy ──► jaeger:16686, jaeger:4318, h2c://jaeger:4317, aviation-api:8000, host.docker.internal:<port>
+  aviation api / worker / producer ──► jaeger:4318   (traces; internal, no token)
+Only Caddy publishes ports (80, 443).
 ```
 
-This is the same as `deploy/caddy/api.caddy`. The backend's `api` container listens on `127.0.0.1:8000`. Also add a DNS
-`A` record for `api.sathishkottravel.com` pointing to the VM.
+- **Certificates:** Caddy reuses the host Caddy's existing certificates.
+- **Jaeger:** keeps traces on disk for 72 hours.
+- **Not deployed by the workflow:** this is set up once by hand, and backend deploys never restart it.
 
-**2. Switch to the container:**
+## 1. Edit your Caddyfile
+
+Inside a container, `localhost` is the container itself, so change the upstreams in `/etc/caddy/Caddyfile`:
+
+| Site | Before | After |
+| ---- | ------ | ----- |
+| `jaeger.sathishkottravel.com` | `reverse_proxy localhost:16686` | `reverse_proxy jaeger:16686` |
+| `otel.sathishkottravel.com` (keep your token check) | `localhost:4318` / `localhost:4317` | `jaeger:4318` / `h2c://jaeger:4317` |
+| `api.sathishkottravel.com` (new; also add a DNS `A` record) | — | `reverse_proxy aviation-api:8000` (see `deploy/caddy/api.caddy`) |
+| other apps running directly on the VM | `reverse_proxy localhost:PORT` | `reverse_proxy host.docker.internal:PORT` |
+
+Apps running directly on the VM must listen on `0.0.0.0` (or `172.17.0.1`), not only on `127.0.0.1`. Keep their ports
+closed in the firewall and Oracle's Security List; Caddy is the only public entry point.
+
+## 2. Run the setup script
 
 ```sh
 git clone --branch feature/vm-deploy https://github.com/sathishkottravel/aviation-telemetry-service.git ~/aviation-telemetry-service
 cd ~/aviation-telemetry-service/deploy/infra
-sudo ./setup-caddy.sh
+sudo ./setup-infra.sh
 ```
 
-The script:
+It stops at the first problem:
 1. Installs Docker Compose v2 if it's missing.
-2. Validates `/etc/caddy/Caddyfile` inside the container **before changing anything**.
-3. Stops and disables the host Caddy (systemd).
-4. Starts the container and checks that port 80 answers.
+2. Validates your Caddyfile **before changing anything**.
+3. Creates the `edge` network.
+4. Starts Jaeger and waits until it's healthy.
+5. Stops the old Jaeger container(s) and the host Caddy (systemd), recording both for rollback.
+6. Starts Caddy and checks port 80.
 
-Keep this folder: the container is managed from here (`docker compose ...`).
+Keep this folder: the containers are managed from here.
 
-**3. If anything is wrong,** go back to the host Caddy:
+## 3. Roll back if needed
 
 ```sh
-sudo ./setup-caddy.sh --rollback
+sudo ./setup-infra.sh --rollback     # stops these containers, restarts your old Jaeger container and host Caddy
 ```
 
 ## Day to day
@@ -49,20 +57,25 @@ sudo ./setup-caddy.sh --rollback
 | Task | Command (in this folder) |
 | ---- | ------------------------ |
 | Reload after editing `/etc/caddy/Caddyfile` | `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile` |
-| Logs | `docker compose logs -f` |
-| Update Caddy | `docker compose pull && docker compose up -d` |
+| Logs | `docker compose logs -f caddy` / `jaeger` |
+| Update images | `docker compose pull && docker compose up -d` |
 | Remove the host Caddy package for good | `sudo apt remove caddy` (once you're happy) |
 
 ## Notes
 
 - **Files outside `/etc/caddy`:** if your Caddyfile uses other host paths (e.g. `root * /var/www/site`, log files),
-  add them as volume lines in `docker-compose.yml`.
-- **Environment variables** (`{$VAR}` in your Caddyfile): if the old systemd unit set them (see
-  `systemctl cat caddy`), put them in `caddy.env` in this folder. It's picked up automatically.
-- **A different certificates path:** if your host Caddy stored its data somewhere other than
-  `/var/lib/caddy/.local/share/caddy`, run with `CADDY_DATA_DIR=<path> sudo -E ./setup-caddy.sh`.
+  add them as volume lines to `caddy` in `docker-compose.yml`.
+- **Environment variables** (`{$VAR}` in your Caddyfile, e.g. from the old systemd unit: `systemctl cat caddy`): put
+  them in `caddy.env` in this folder.
+- **A different certificates path:** if your host Caddy's data isn't in `/var/lib/caddy/.local/share/caddy`, run with
+  `CADDY_DATA_DIR=<path> sudo -E ./setup-infra.sh`.
+- **Other projects** can keep sending traces to `https://otel.sathishkottravel.com` with your token.
 
 ## Troubleshooting
 
 **`Unable to locate package docker-compose-plugin`**: on Ubuntu's own Docker (`docker.io`), the package is called
 `docker-compose-v2`. The script installs it; by hand, run `sudo apt install -y docker-compose-v2`.
+
+**502 from a site:** the upstream isn't reachable from the Caddy container. Check that it uses a container name on
+`edge` or `host.docker.internal:PORT` (not `localhost`), and that an app running directly on the VM listens on
+`0.0.0.0`.

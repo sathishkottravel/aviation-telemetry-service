@@ -1,7 +1,8 @@
 # The aviation API site. Paste it into the VM's Caddyfile (/etc/caddy/Caddyfile) and reload Caddy.
-# The backend's api container listens on 127.0.0.1:8000 (deploy/docker-compose.prod.yml). The API itself enforces
-# API_TOKEN (GraphQL, POST /api/telemetry) and X-Admin-Token (DELETE /api/telemetry); WebSockets are proxied as-is.
+# Caddy and the backend's api container share the Docker network "edge", where the api is "aviation-api".
+# The API itself enforces API_TOKEN (GraphQL, POST /api/telemetry) and X-Admin-Token (DELETE /api/telemetry);
+# WebSockets (GraphQL subscriptions) are proxied as-is.
 
 api.sathishkottravel.com {
-	reverse_proxy localhost:8000
+	reverse_proxy aviation-api:8000
 }

@@ -15,15 +15,17 @@ push to main ─► test (uv run pytest)
 ## What runs where
 
 ```
-Internet ─► Caddy (Docker, host network, your /etc/caddy) ─┬─ jaeger.* / otel.* / your other sites   (unchanged)
-                                                           └─ api.sathishkottravel.com ─► localhost:8000
-api (127.0.0.1:8000) ──► producer:8001    (internal only; not routed by Caddy)
-api / worker / producer ──► MongoDB Atlas, CloudAMQP, and traces to https://otel.sathishkottravel.com (token)
+Internet ─► Caddy (Docker, your /etc/caddy) ─┬─ jaeger.* / otel.* ─► jaeger (Docker)
+                                              ├─ your other sites
+                                              └─ api.sathishkottravel.com ─► aviation-api:8000
+Docker network "edge": caddy, jaeger, api, worker, producer
+  api / worker / producer ──► jaeger:4318 (traces)   api ──► producer:8001 (internal only)
+  all ──► MongoDB Atlas, CloudAMQP (external)
 ```
 
-Caddy and your Jaeger are **not** managed by this repo, and deploys never restart them. This repo deploys only the
-three backend services (`deploy/docker-compose.prod.yml`, compose project `aviation`). The `api` listens on
-`127.0.0.1:8000`, reachable only from the VM itself, so it's exposed only through Caddy.
+Caddy and Jaeger are set up once by hand ([`infra/`](infra/README.md)) and deploys never restart them. This repo's
+workflow deploys only the three backend services (`deploy/docker-compose.prod.yml`, compose project `aviation`). They
+publish no ports: Caddy reaches the api as `aviation-api:8000` on `edge`.
 
 Public API surface (`https://api.sathishkottravel.com`):
 
@@ -38,11 +40,11 @@ Public API surface (`https://api.sathishkottravel.com`):
 
 Do these before merging the PR that adds the workflow: merging triggers the first deploy.
 
-### 1. Caddy
-- Add a DNS `A` record for `api.sathishkottravel.com` pointing to the VM.
-- Add the block from [`caddy/api.caddy`](caddy/api.caddy) to your Caddyfile: `api.sathishkottravel.com { reverse_proxy localhost:8000 }`.
-- To run Caddy in Docker with your existing config, follow [`infra/README.md`](infra/README.md): a single
-  `sudo ./setup-caddy.sh`. A Caddy installed on the host works the same way; just reload it.
+### 1. Caddy, Jaeger and the `edge` network
+Follow [`infra/README.md`](infra/README.md):
+1. Point your Caddyfile's upstreams at containers (`jaeger:16686`, `aviation-api:8000`, `host.docker.internal:PORT`),
+   and add the `api.sathishkottravel.com` block and its DNS record.
+2. Run `sudo ./setup-infra.sh`. It also creates the `edge` network, which the backend deploy needs.
 
 `https://api.sathishkottravel.com` returns 502 until the first backend deploy. That's expected.
 

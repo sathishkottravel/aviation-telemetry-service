@@ -559,19 +559,19 @@ The backend runs on an Oracle Always Free VM (ARM). Every push to `main` runs
 4. smoke test
 
 ```
-Internet ─► Caddy (your existing config, in Docker) ─┬─ jaeger.* / otel.* / other sites   (unchanged)
-                                                     └─ api.sathishkottravel.com ─► localhost:8000 (GraphQL + REST, API_TOKEN)
-api / worker / producer ──► MongoDB Atlas, CloudAMQP; traces → https://otel.sathishkottravel.com
+Internet ─► Caddy (your /etc/caddy, in Docker) ─┬─ jaeger.* / otel.* ─► jaeger (Docker)
+                                                └─ api.sathishkottravel.com ─► aviation-api:8000 (GraphQL + REST, API_TOKEN)
+Docker network "edge": caddy, jaeger, api, worker, producer (traces → jaeger:4318); MongoDB Atlas + CloudAMQP external
 ```
 
-- **`deploy/docker-compose.prod.yml`:** the three services from GHCR images. The api listens on `127.0.0.1:8000` only,
-  and the producer is internal. Settings come from the VM-only `/opt/aviation/.env` (template:
+- **`deploy/docker-compose.prod.yml`:** the three services from GHCR images. They join the `edge` network and publish no
+  ports. Settings come from the VM-only `/opt/aviation/.env` (template:
   `deploy/.env.prod.example`).
 - **`deploy/remote-deploy.sh`:** `up --wait` on healthchecks. On failure, it goes back to the previous tag and the job
   fails.
 - **`deploy/caddy/api.caddy`:** the one site block to add to the VM's Caddyfile.
-- **`deploy/infra/`:** optional. It runs Caddy in Docker with your existing `/etc/caddy` config
-  (`sudo ./setup-caddy.sh`); see [deploy/infra/README.md](deploy/infra/README.md).
+- **`deploy/infra/`:** Caddy (with your own `/etc/caddy` config) and Jaeger in Docker on `edge`, set up once with
+  `sudo ./setup-infra.sh`; see [deploy/infra/README.md](deploy/infra/README.md).
 - **Images** install exactly the versions in `uv.lock` (`uv export` + `pip install --require-hashes`), locally and in CI.
 
 One-time setup (Caddy block, deploy user, `.env`, GitHub environment and secrets, GHCR visibility) and operations

@@ -1,16 +1,26 @@
-# Caddy in Docker, running your existing /etc/caddy config unchanged. Set up with ./setup-caddy.sh (see README.md).
+# Caddy + Jaeger for the VM, on the shared Docker network "edge". Set up with ./setup-infra.sh (see README.md).
 #
-# network_mode: host → inside the container "localhost" is the VM itself, so every `reverse_proxy localhost:PORT`
-# in your Caddyfile keeps working as it did with the Caddy installed on the host.
-name: caddy
+# Caddy runs your own /etc/caddy config. On "edge" it reaches containers by name (jaeger:16686, aviation-api:8000);
+# apps running directly on the VM are host.docker.internal:<port>. Only Caddy publishes ports.
+name: infra
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   caddy:
     image: caddy:2
-    network_mode: host
-    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
-      # Optional: environment variables your Caddyfile uses ({$VAR}), e.g. copied from the old systemd unit.
+      # Optional: environment variables your Caddyfile uses ({$VAR}).
       - path: ./caddy.env
         required: false
     volumes:
@@ -18,13 +28,42 @@ services:
       # Reuse the host Caddy's certificates and ACME account, so nothing is re-issued.
       - ${CADDY_DATA_DIR:-/var/lib/caddy/.local/share/caddy}:/data/caddy
       - caddy-config:/config
-      # Add a line for any other host path your Caddyfile uses, e.g.:
-      # - /var/www:/var/www:ro
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    networks: [edge]
+    restart: unless-stopped
+    logging: *logging
+
+  # One-shot: Jaeger runs as uid 10001, but a new volume is owned by root.
+  jaeger-init:
+    image: busybox:1.37
+    command: ["chown", "-R", "10001:0", "/badger"]
+    volumes:
+      - jaeger-data:/badger
+
+  jaeger:
+    image: jaegertracing/jaeger:2.21.0
+    command: ["--config", "/etc/jaeger/config.yaml"]
+    volumes:
+      - ./jaeger-config.yaml:/etc/jaeger/config.yaml:ro
+      - jaeger-data:/badger
+    depends_on:
+      jaeger-init:
+        condition: service_completed_successfully
+    networks:
+      edge:
+        aliases: [jaeger]   # UI jaeger:16686, OTLP jaeger:4318 (HTTP) / jaeger:4317 (gRPC)
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging: *logging
+
+networks:
+  edge:
+    external: true
 
 volumes:
   caddy-config:
+  jaeger-data:
