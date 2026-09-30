@@ -82,10 +82,16 @@ class Mutation:
 
 @strawberry.type
 class Subscription:
-    @strawberry.subscription(description="Live positions for one flight (ICAO hex), or '*' for every flight.")
-    async def live_telemetry(self, flight_id: strawberry.ID) -> AsyncGenerator[Telemetry, None]:
-        async for telemetry in broadcaster.subscribe(flight_id):
-            yield Telemetry.from_model(telemetry)
+    @strawberry.subscription(
+        description=(
+            "Latest position of every matching flight as a list: one flight (ICAO hex) or '*' for all. "
+            "Sent on subscribe and when positions change (bursts batched, at most once per second); flights silent for "
+            "5 minutes drop out."
+        )
+    )
+    async def live_telemetry(self, flight_id: strawberry.ID) -> AsyncGenerator[list[Telemetry], None]:
+        async for snapshot in broadcaster.subscribe(flight_id):
+            yield [Telemetry.from_model(t) for t in snapshot]
 
 
 # Spans for GraphQL parsing, validation and custom resolvers; a no-op when tracing is disabled.
