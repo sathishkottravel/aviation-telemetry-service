@@ -1,0 +1,129 @@
+# Test, build ARM64 images, and deploy the backend to the Oracle VM on every push to main.
+# Run manually with an image_tag (an earlier commit SHA) to redeploy/roll back without building.
+# One-time setup (VM, secrets, GHCR visibility): deploy/README.md.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing image tag (commit SHA) to deploy without building, e.g. to roll back"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits instead of cancelling a deploy halfway.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/sathishkottravel/aviation-telemetry-service
+
+jobs:
+  test:
+    if: inputs.image_tag == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.6.16"
+          python-version: "3.12"
+      - run: uv sync --all-packages --frozen
+      - name: Unit tests
+        run: uv run pytest
+
+  build:
+    needs: test
+    if: inputs.image_tag == ''
+    # Native ARM64 runner (free for public repos), matching the Ampere VM.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: api-service/Dockerfile
+          - name: worker
+            dockerfile: telemetry-worker/Dockerfile
+          - name: producer
+            dockerfile: adsb-producer/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ github.sha }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: build
+    # Deploy after a successful build, or directly for a manual image_tag run. Only ever from main.
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      (needs.build.result == 'success' || (inputs.image_tag != '' && needs.build.result == 'skipped'))
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      VM_HOST: ${{ secrets.VM_HOST }}
+      VM_USER: ${{ secrets.VM_USER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH (key + pinned host key)
+        env:
+          SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf 'Host vm\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/deploy_key\n  StrictHostKeyChecking yes\n' \
+            "$VM_HOST" "$VM_USER" > ~/.ssh/config
+
+      - name: Copy deployment files
+        run: scp deploy/docker-compose.prod.yml deploy/remote-deploy.sh vm:/opt/aviation/
+
+      - name: Deploy ${{ env.IMAGE_TAG }}
+        run: |
+          # image_tag can come from manual input: only accept a commit SHA before it reaches the remote shell.
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{7,40}$ ]] || { echo "image_tag must be a commit SHA, got '$IMAGE_TAG'"; exit 1; }
+          # shellcheck disable=SC2029  # expanding IMAGE_TAG locally is intended
+          ssh vm "bash /opt/aviation/remote-deploy.sh '$IMAGE_TAG'"
+
+      - name: Smoke test
+        env:
+          API_DOMAIN: ${{ secrets.API_DOMAIN }}
+          API_TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          query='{"query":"{ __typename }"}'
+          curl -fsS --retry 5 --retry-delay 3 --retry-all-errors "https://$API_DOMAIN/health"
+          curl -fsS -H "Authorization: Bearer $API_TOKEN" -H 'Content-Type: application/json' -d "$query" \
+            "https://$API_DOMAIN/graphql" | grep -q '"__typename"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d "$query" \
+            "https://$API_DOMAIN/graphql")
+          test "$code" = 401 || { echo "GraphQL without a token returned $code, expected 401"; exit 1; }
