@@ -467,11 +467,11 @@ ADS-B data gives the same chain under a producer `adsb.poll` span, which also co
 | Setting | Default | Meaning |
 | ------- | ------- | ------- |
 | `OTEL_ENABLED` | `false` (compose: `true`) | Turns tracing on. When off, the tracing code is a no-op |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` (compose: `http://jaeger:4317`) | OTLP endpoint (Jaeger, or a hosted backend) |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` | `grpc`, or `http/protobuf` for HTTP-only gateways such as Grafana Cloud (`/v1/traces` is appended to the endpoint) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` (compose: `http://jaeger:4318`) | OTLP endpoint (Jaeger, or a hosted backend) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` (compose: `http/protobuf`) | `grpc`, or `http/protobuf` for HTTP-only gateways such as Grafana Cloud (`/v1/traces` is appended to the endpoint) |
 | `OTEL_EXPORTER_OTLP_HEADERS` | empty | Auth headers for hosted backends, URL-encoded (`%20` for a space) |
 | `OTEL_SERVICE_NAME` | per service | Overrides the service name |
-| `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT`, `COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL`, `COMPOSE_OTEL_EXPORTER_OTLP_HEADERS` | `true`, bundled Jaeger, `grpc`, empty | The same settings for the compose containers |
+| `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT`, `COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL`, `COMPOSE_OTEL_EXPORTER_OTLP_HEADERS`, `COMPOSE_OTEL_TRACES_EXPORTER` | `true`, bundled Jaeger over HTTP (`http://jaeger:4318`), `http/protobuf`, empty, `otlp` | The same settings for the compose containers |
 
 - **If Jaeger is unreachable,** the services keep working; spans are exported in the background and only exporter warnings are logged.
 - **Local `uv run` tracing:** run `docker compose up -d jaeger`, then set `OTEL_ENABLED=true` in `.env`.
