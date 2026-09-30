@@ -1,10 +1,10 @@
-# Site block for the aviation API. Add it to the VM's existing Caddyfile once (paste it in, or
-# `import /path/to/api.caddy`), then reload Caddy. Caddy must be attached to the "edge" Docker network.
+# Site block for the aviation API. Copy it into /opt/infra/sites/ on the VM (the shared Caddy from
+# deploy/infra imports sites/*.caddy), then reload Caddy. Caddy must be attached to the "edge" Docker network.
 #
 # Everything is proxied: the API itself enforces API_TOKEN on GraphQL and POST /api/telemetry, and
 # X-Admin-Token on DELETE /api/telemetry. WebSocket upgrades (GraphQL subscriptions) are proxied automatically.
 # If Caddy runs on the host instead of in Docker, publish 127.0.0.1:8000:8000 on the api service and use
-# `reverse_proxy 127.0.0.1:8000`.
+# `reverse_proxy 127.0.0.1:8000` (see "Keep Caddy on the host" in deploy/infra/README.md).
 
 api.sathishkottravel.com {
 	reverse_proxy aviation-api:8000

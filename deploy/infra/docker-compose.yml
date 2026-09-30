@@ -49,6 +49,9 @@ services:
       - "443:443"
       - "443:443/udp"
     env_file: .env
+    # Lets site files proxy to services running directly on the VM: reverse_proxy host.docker.internal:<port>
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./sites:/etc/caddy/sites:ro

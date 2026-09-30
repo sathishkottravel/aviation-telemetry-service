@@ -48,24 +48,23 @@ through `sites/api.caddy` and sends its traces to `jaeger` internally. Other pro
     ```
     On Oracle Linux, use `sudo firewall-cmd --permanent --add-service=http --add-service=https && sudo firewall-cmd --reload`.
 
-## 2. Replace your current Caddy and Jaeger
+## 2. Prepare (no downtime; your current Caddy keeps serving)
 
-Ports 80 and 443 can only be used by one Caddy.
+These steps assume your current Caddy is installed **directly on the VM** (not in Docker), usually as the systemd
+service `caddy` reading `/etc/caddy/Caddyfile`.
 
-1. **Note your current OTLP token** and the header your other project sends it in. The new `otel.*` site expects
-   `Authorization: Bearer <token>`. If your project sends it differently, adjust the `@authorized` matcher in the
-   `Caddyfile`.
-2. **Stop and remove the old containers** (`docker ps` shows their names), or stop a Caddy that runs as a system service:
-   ```sh
-   docker stop <old-caddy> <old-jaeger> && docker rm <old-caddy> <old-jaeger>
-   # or: sudo systemctl disable --now caddy
-   ```
-3. **Nothing else carries over.** The new Caddy gets fresh certificates on its first start, which is well within Let's
-   Encrypt's limits. Traces in the old Jaeger aren't migrated; an all-in-one without configured storage kept them
-   in memory anyway.
+### 2.1 Inspect what runs today
+```sh
+systemctl status caddy --no-pager      # host Caddy service (or: ps aux | grep caddy)
+cat /etc/caddy/Caddyfile               # plus any files it imports
+docker ps                              # is the current Jaeger a container?
+sudo ss -ltnp | grep -E ':(80|443|4317|4318|16686)\b'   # who holds these ports
+```
+Note your current **OTLP token** and how the other project sends it. The new `otel.*` site expects
+`Authorization: Bearer <token>`; if your old block checked something else, adjust the `@authorized` matcher in the
+`Caddyfile`.
 
-## 3. Install
-
+### 2.2 Put the stack in place
 ```sh
 docker network create edge                        # once; shared by every stack on the VM
 sudo install -d -o $USER /opt/infra
@@ -74,9 +73,51 @@ sudo install -d -o $USER /opt/infra
 cd /opt/infra
 cp .env.example .env && chmod 600 .env            # set the domains and OTEL_INGEST_TOKEN (your existing token)
 cp <repo>/deploy/caddy/api.caddy sites/           # the aviation API site (api.sathishkottravel.com → aviation-api:8000)
-docker compose up -d
-docker compose ps                                 # jaeger (healthy), caddy (running); jaeger-init exited 0
 ```
+
+### 2.3 Move your other sites from the host Caddyfile
+The stack's `Caddyfile` already covers `jaeger.*` and `otel.*`. Put **every other site block** from
+`/etc/caddy/Caddyfile` into its own file in `/opt/infra/sites/`, and change upstreams that point to the VM itself:
+
+| In `/etc/caddy/Caddyfile` (host) | In `/opt/infra/sites/<name>.caddy` (container) |
+| -------------------------------- | ---------------------------------------------- |
+| `reverse_proxy localhost:3000` | `reverse_proxy host.docker.internal:3000` |
+| `reverse_proxy 127.0.0.1:3000` | `reverse_proxy host.docker.internal:3000` |
+| `reverse_proxy some-container:3000` (published port) | attach that container to `edge` and use its name, or keep `host.docker.internal:<published port>` |
+| `root * /var/www/site` + `file_server` | also mount the folder into the Caddy container (`- /var/www/site:/var/www/site:ro` in `docker-compose.yml`) |
+
+`host.docker.internal` is the VM itself, as seen from the Caddy container (`extra_hosts` in `docker-compose.yml`). A
+service on the VM that listens **only on `127.0.0.1` can't be reached from a container**. Make it listen on `0.0.0.0`
+(or on the Docker bridge address `172.17.0.1`). The VM firewall and Oracle's Security List keep that port closed to
+the internet, as long as you don't open it there.
+
+### 2.4 Validate before switching
+```sh
+cd /opt/infra
+docker run --rm --env-file .env -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/sites:/etc/caddy/sites:ro" \
+  caddy:2 caddy validate --config /etc/caddy/Caddyfile        # must end with "Valid configuration"
+docker compose up -d jaeger                                   # Jaeger publishes no ports, so it can start now
+docker compose ps                                             # jaeger (healthy); jaeger-init exited 0
+```
+
+## 3. Switch over (a short outage while ports 80/443 change hands)
+
+```sh
+sudo systemctl disable --now caddy          # stop the host Caddy and keep it from starting at boot
+cd /opt/infra && docker compose up -d       # starts the Caddy container on 80/443
+docker compose logs -f caddy                # wait for "certificate obtained successfully" for each domain
+```
+Then stop the old Jaeger, which the stack's Jaeger replaces. If it's a container, run
+`docker stop <old-jaeger> && docker rm <old-jaeger>`; if it runs on the host, stop its service or process. Traces in
+the old Jaeger aren't migrated.
+
+**Rollback** (your old config and certificates were never touched):
+```sh
+cd /opt/infra && docker compose stop caddy && sudo systemctl enable --now caddy
+```
+
+**Later, once everything works:** `sudo apt remove caddy`, or leave the package installed but disabled. The container
+issues and stores its own certificates in the `caddy-data` volume.
 
 ## 4. Check
 
@@ -112,3 +153,17 @@ Exporter settings for other projects:
 
 The stack keeps running when the backend is redeployed or removed. Caddy only proxies to `aviation-api` while that
 container exists.
+
+## Alternative: keep Caddy on the host (not recommended)
+
+If you'd rather keep the Caddy installed on the VM, it can't reach containers by name, so publish their ports on
+loopback and point the host Caddyfile at them:
+
+1. **Stack Jaeger:** add `ports: ["127.0.0.1:16686:16686", "127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]` to `jaeger`.
+   Run only Jaeger: `docker compose up -d jaeger`.
+2. **Backend API:** add `ports: ["127.0.0.1:8000:8000"]` to `api` in `deploy/docker-compose.prod.yml`.
+3. **Host Caddyfile:** `reverse_proxy 127.0.0.1:16686` for the UI, and `127.0.0.1:4318` / `h2c://127.0.0.1:4317` for
+   OTLP (keep your token check). For the API, use `reverse_proxy 127.0.0.1:8000`.
+
+Everything else stays the same; the backend still sends traces to `jaeger` over `edge`. The downsides: Caddy's config
+stays outside the repo and is managed by hand, and ports have to be coordinated per project.
