@@ -57,7 +57,9 @@ async def lifespan(app: FastAPI):
     shutdown_tracing()
 
 
-app = FastAPI(title="ADS-B Producer", lifespan=lifespan)
+# FastAPI >= 0.142 would otherwise add its own OTLP exporters (traces, metrics, logs) whenever
+# OTEL_EXPORTER_OTLP_ENDPOINT is set, duplicating ours; tracing is configured in telemetry_shared.observability.
+app = FastAPI(title="ADS-B Producer", lifespan=lifespan, telemetry={"auto_configure": False})
 app.include_router(router)
 if tracing_enabled:
     # Skip the per-message ASGI receive/send spans; the request span and our custom spans tell the story.

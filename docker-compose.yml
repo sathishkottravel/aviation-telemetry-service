@@ -8,7 +8,10 @@ x-service-env: &service-env
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
   # Tracing to the bundled Jaeger. Set COMPOSE_OTEL_ENABLED=false in .env to turn it off in the containers.
   OTEL_ENABLED: ${COMPOSE_OTEL_ENABLED:-true}
-  OTEL_EXPORTER_OTLP_ENDPOINT: ${COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+  OTEL_EXPORTER_OTLP_HEADERS: ${COMPOSE_OTEL_EXPORTER_OTLP_HEADERS:-}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  OTEL_TRACES_EXPORTER: ${COMPOSE_OTEL_TRACES_EXPORTER:-otlp}
 
 services:
   jaeger:

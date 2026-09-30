@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -27,6 +28,8 @@ class Settings(BaseSettings):
     otel_service_name: str | None = None
     """Overrides the service's default name (flight-telemetry-api / -worker / -producer)."""
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+    otel_exporter_otlp_protocol: Literal["grpc", "http/protobuf"] = "grpc"
+    """grpc for Jaeger/Honeycomb-style endpoints; http/protobuf for HTTP-only gateways such as Grafana Cloud."""
 
     producer_url: str = "http://localhost:8001"
     """Where the API reaches the ADS-B producer (for listing trackable aircraft)."""

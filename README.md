@@ -482,12 +482,33 @@ ADS-B data gives the same chain under a producer `adsb.poll` span, which also co
 | Setting | Default | Meaning |
 | ------- | ------- | ------- |
 | `OTEL_ENABLED` | `false` (compose: `true`) | Turns tracing on. When off, the tracing code is a no-op |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` (compose: `http://jaeger:4317`) | OTLP/gRPC endpoint of a local or deployed Jaeger |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` (compose: `http://jaeger:4318`) | OTLP endpoint (Jaeger, or a hosted backend) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` (compose: `http/protobuf`) | `grpc`, or `http/protobuf` for HTTP-only gateways such as Grafana Cloud (`/v1/traces` is appended to the endpoint) |
+| `OTEL_EXPORTER_OTLP_HEADERS` | empty | Auth headers for hosted backends, URL-encoded (`%20` for a space) |
 | `OTEL_SERVICE_NAME` | per service | Overrides the service name |
-| `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT` | `true`, bundled Jaeger | The same settings for the compose containers |
+| `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT`, `COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL`, `COMPOSE_OTEL_EXPORTER_OTLP_HEADERS`, `COMPOSE_OTEL_TRACES_EXPORTER` | `true`, bundled Jaeger over HTTP (`http://jaeger:4318`), `http/protobuf`, empty, `otlp` | The same settings for the compose containers |
 
 - **If Jaeger is unreachable,** the services keep working; spans are exported in the background and only exporter warnings are logged.
 - **Local `uv run` tracing:** run `docker compose up -d jaeger`, then set `OTEL_ENABLED=true` in `.env`.
+
+### Send traces to Grafana Cloud
+
+Grafana Cloud's OTLP gateway accepts **HTTP only**. With the default gRPC protocol, exports fail with `StatusCode.UNAVAILABLE ... missing selected ALPN property`.
+
+1. In the Grafana Cloud portal, open the **OpenTelemetry** tile. Copy the OTLP endpoint and the instance ID, and create a token.
+2. Build the credential: `printf '%s' '<instance-id>:<token>' | base64`.
+3. Set these in `.env` (the `COMPOSE_` versions apply to the containers; drop the prefix for `uv run`):
+
+   ```
+   COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+   COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp-gateway-prod-<region>.grafana.net/otlp
+   COMPOSE_OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20<base64 from step 2>
+   ```
+
+   The headers value must include `Authorization=Basic%20`; the base64 on its own isn't sent as a header.
+4. Run `docker compose up`. The traces appear in Grafana under **Explore → Tempo**, where you can search by `service.name` or a tag such as `flight.id`.
+
+The local Jaeger stays the default; unset the three variables to go back to it.
 
 ## Status
 

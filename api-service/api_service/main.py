@@ -43,7 +43,9 @@ async def lifespan(app: FastAPI):
     shutdown_tracing()
 
 
-app = FastAPI(title="Aviation Telemetry API", lifespan=lifespan)
+# FastAPI >= 0.142 would otherwise add its own OTLP exporters (traces, metrics, logs) whenever
+# OTEL_EXPORTER_OTLP_ENDPOINT is set, duplicating ours; tracing is configured in telemetry_shared.observability.
+app = FastAPI(title="Aviation Telemetry API", lifespan=lifespan, telemetry={"auto_configure": False})
 app.include_router(rest_router)
 app.include_router(GraphQLRouter(schema), prefix="/graphql")
 if tracing_enabled:
