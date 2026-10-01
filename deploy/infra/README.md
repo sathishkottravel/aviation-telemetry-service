@@ -61,6 +61,25 @@ sudo ./setup-infra.sh --rollback     # stops these containers, restarts your old
 | Update images | `docker compose pull && docker compose up -d` |
 | Remove the host Caddy package for good | `sudo apt remove caddy` (once you're happy) |
 
+## Lean settings (Jaeger)
+
+Jaeger is kept small so it doesn't slow down the VM:
+
+- **Limits** (`docker-compose.yml`): `mem_limit: 384m`, `cpus: 0.75`, `GOMAXPROCS=1`, and `GOMEMLIMIT=300MiB`, so Go
+  collects garbage harder near the limit instead of being OOM-killed.
+- **Ingest** (`jaeger-config*.yaml`): the `memory_limiter` processor (250 MiB) refuses spans under memory pressure.
+  The services keep working; at worst some spans are dropped. Batches are small and OTLP requests are capped at 4 MB.
+- **Retention:** 24h (Badger TTL, matching `TELEMETRY_TTL_DAYS=1`), with value-log GC every minute.
+- **UI** (`jaeger-ui.json`): no System Architecture (dependencies) or Monitor tabs, search look-back up to 1 day,
+  at most 100 results. Jaeger's own metrics are off and its logs show warnings only.
+- **Storage:**
+  - Default: Badger on disk (`jaeger-config.yaml`). Traces survive restarts.
+  - In-memory alternative (`jaeger-config.memory.yaml`): at most 2000 traces, no disk, traces lost on restart. Switch
+    with `JAEGER_CONFIG=jaeger-config.memory.yaml docker compose up -d jaeger`, or put
+    `JAEGER_CONFIG=jaeger-config.memory.yaml` in an `.env` file in this folder.
+
+Check usage with `docker stats --no-stream infra-jaeger-1`.
+
 ## Notes
 
 - **Files outside `/etc/caddy`:** if your Caddyfile uses other host paths (e.g. `root * /var/www/site`, log files),

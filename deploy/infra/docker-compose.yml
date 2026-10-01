@@ -39,11 +39,21 @@ services:
     volumes:
       - jaeger-data:/badger
 
+  # Kept small for the VM (README.md → Lean settings). Storage: Badger on disk (default) or, with
+  # JAEGER_CONFIG=jaeger-config.memory.yaml, a capped in-memory store.
   jaeger:
     image: jaegertracing/jaeger:2.21.0
-    command: ["--config", "/etc/jaeger/config.yaml"]
+    mem_limit: 384m
+    cpus: 0.75
+    environment:
+      # Go's soft heap limit (~80% of mem_limit): the GC works harder near it instead of hitting the OOM killer.
+      GOMEMLIMIT: 300MiB
+      GOMAXPROCS: "1"
+    command: ["--config", "/etc/jaeger/${JAEGER_CONFIG:-jaeger-config.yaml}"]
     volumes:
-      - ./jaeger-config.yaml:/etc/jaeger/config.yaml:ro
+      - ./jaeger-config.yaml:/etc/jaeger/jaeger-config.yaml:ro
+      - ./jaeger-config.memory.yaml:/etc/jaeger/jaeger-config.memory.yaml:ro
+      - ./jaeger-ui.json:/etc/jaeger/jaeger-ui.json:ro
       - jaeger-data:/badger
     depends_on:
       jaeger-init:
@@ -53,7 +63,7 @@ services:
         aliases: [jaeger]   # UI jaeger:16686, OTLP jaeger:4318 (HTTP) / jaeger:4317 (gRPC)
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:13133/status"]
-      interval: 15s
+      interval: 30s
       timeout: 5s
       retries: 5
       start_period: 10s

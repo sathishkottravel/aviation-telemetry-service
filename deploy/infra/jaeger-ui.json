@@ -1,0 +1,9 @@
+{
+  "archiveEnabled": false,
+  "dependencies": { "menuEnabled": false },
+  "monitor": { "menuEnabled": false },
+  "search": {
+    "maxLookback": { "label": "1 Day", "value": "1d" },
+    "maxLimit": 100
+  }
+}
