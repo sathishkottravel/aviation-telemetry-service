@@ -21,9 +21,9 @@ envVarGroups:
     envVars:
       - key: LOG_LEVEL
         value: INFO
-      # MongoDB Atlas and CloudAMQP are shared with the VM; keep these equal to the VM's .env.
+      # Render's own database on the Atlas cluster (the VM uses "aviation"); seed it once with seed-db.
       - key: MONGODB_DB
-        value: aviation
+        value: aviation-prod
       # The worker applies this TTL index on startup; the VM's worker does too, so a mismatch flips it back and forth.
       - key: TELEMETRY_TTL_DAYS
         value: "1"

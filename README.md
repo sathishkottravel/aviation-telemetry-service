@@ -576,6 +576,7 @@ ADS-B data gives the same chain under a producer `adsb.poll` span, which also co
 | `OTEL_SERVICE_NAME` | per service | Overrides the service name |
 | `COMPOSE_OTEL_ENABLED`, `COMPOSE_OTEL_EXPORTER_OTLP_ENDPOINT`, `COMPOSE_OTEL_EXPORTER_OTLP_PROTOCOL`, `COMPOSE_OTEL_EXPORTER_OTLP_HEADERS`, `COMPOSE_OTEL_TRACES_EXPORTER` | `true`, bundled Jaeger over HTTP (`http://jaeger:4318`), `http/protobuf`, empty, `otlp` | The same settings for the compose containers |
 
+- **Logs in traces:** log records at INFO and above that a service writes while a span is active (an API request, an ADS-B poll, a worker message) are added to that span as events. Jaeger shows them under the span's **Logs**. Records from library loggers (OpenTelemetry, pymongo, aio-pika, httpx, uvicorn) are skipped and messages are cut at 1 KB. Jaeger has no logs backend, so this is how logs reach it; the full logs stay in the container output.
 - **If Jaeger is unreachable,** the services keep working; spans are exported in the background and only exporter warnings are logged.
 - **Local `uv run` tracing:** run `docker compose up -d jaeger`, then set `OTEL_ENABLED=true` in `.env`.
 
