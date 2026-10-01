@@ -3,17 +3,33 @@
 #
 # Free web services sleep after 15 minutes without inbound HTTP. The api pings the producer and worker
 # (WAKE_URLS) on startup and every 10 minutes, so the whole stack wakes with the api and sleeps after it.
-# Values marked sync: false are entered in the Render dashboard when the Blueprint is created.
+#
+# Two kinds of values:
+# - value / generateValue: committed here and re-applied on every Blueprint sync. Change them in this file;
+#   edits made in the dashboard are reverted on the next sync.
+# - sync: false: entered in the dashboard when the Blueprint is created, then edited there (service -> Environment).
+#   Used for secrets, URLs and tracing. An empty value means the code default (settings ignore empty values).
+#
+# Tracing (sync: false on each service, since an env group cannot hold sync: false keys):
+#   OTEL_ENABLED                 true / false (empty = off)
+#   OTEL_EXPORTER_OTLP_ENDPOINT  e.g. https://otel.sathishkottravel.com or https://otlp-gateway-prod-<region>.grafana.net/otlp
+#   OTEL_EXPORTER_OTLP_PROTOCOL  http/protobuf or grpc (empty = grpc)
+#   OTEL_EXPORTER_OTLP_HEADERS   URL-encoded auth, e.g. x-api-key=<key> or Authorization=Basic%20<base64>
 
 envVarGroups:
   - name: aviation-shared
     envVars:
       - key: LOG_LEVEL
         value: INFO
+      # MongoDB Atlas and CloudAMQP are shared with the VM; keep these equal to the VM's .env.
       - key: MONGODB_DB
         value: aviation
-      - key: OTEL_ENABLED
-        value: "false"
+      # The worker applies this TTL index on startup; the VM's worker does too, so a mismatch flips it back and forth.
+      - key: TELEMETRY_TTL_DAYS
+        value: "1"
+      # Tells Render traces apart from VM traces in the same backend (no effect while tracing is off).
+      - key: OTEL_RESOURCE_ATTRIBUTES
+        value: deployment.environment=render
       # The api sends it, the producer requires it (the producer is public on Render).
       - key: PRODUCER_TOKEN
         generateValue: true
@@ -46,6 +62,14 @@ services:
       # https://<producer>.onrender.com/health,https://<worker>.onrender.com/health
       - key: WAKE_URLS
         sync: false
+      - key: OTEL_ENABLED
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_PROTOCOL
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
+        sync: false
 
   - type: web
     name: aviation-producer
@@ -62,11 +86,29 @@ services:
       - fromGroup: aviation-shared
       - key: RABBITMQ_URL
         sync: false
+      # ADSB.lol area: a circle around this point. It rate-limits aggressively; keep the interval at 10 s or more.
+      - key: ADSB_LATITUDE
+        value: "59.3"
+      - key: ADSB_LONGITUDE
+        value: "18.0"
+      - key: ADSB_RADIUS_NM
+        value: "100"
       - key: ADSB_POLL_INTERVAL
         value: "10"
+      # ADSB.lol returns 403 for generic User-Agents.
+      - key: ADSB_USER_AGENT
+        value: aviation-telemetry-service/0.1 (+https://github.com/sathishkottravel/aviation-telemetry-service)
       # Tracking state is in memory and lost when the service sleeps; these IDs are re-tracked on wake.
       # Leave empty if the VM producer tracks the same aircraft (shared broker and database).
       - key: ADSB_PRODUCER_AIRCRAFT
+        sync: false
+      - key: OTEL_ENABLED
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_PROTOCOL
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
         sync: false
 
   - type: web
@@ -86,4 +128,12 @@ services:
       - key: MONGODB_URI
         sync: false
       - key: RABBITMQ_URL
+        sync: false
+      - key: OTEL_ENABLED
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_ENDPOINT
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_PROTOCOL
+        sync: false
+      - key: OTEL_EXPORTER_OTLP_HEADERS
         sync: false

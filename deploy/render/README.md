@@ -25,8 +25,8 @@ MongoDB Atlas and CloudAMQP are the **same** as the VM's. Nothing under `deploy/
   once) and each api gets its own `telemetry.live` queue, so both see every live update. **Only one producer should
   track a given aircraft** (VM or Render), otherwise ADSB.lol is polled twice and duplicate points are stored. Set
   `ADSB_PRODUCER_AIRCRAFT` on one side only.
-- 512 MB / 0.1 CPU per service. Tracing is off (`OTEL_ENABLED=false`); to trace, set the Grafana Cloud variables from
-  the main README on each service.
+- 512 MB / 0.1 CPU per service. Tracing is off unless you turn it on per service (see Setup); Render spans carry
+  `deployment.environment=render`, so they can be filtered apart from the VM's in the same backend.
 
 ## Credentials
 
@@ -60,6 +60,13 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
    | api | `PRODUCER_URL` | `https://aviation-producer.onrender.com` (the producer's URL shown by Render) |
    | api | `WAKE_URLS` | `https://aviation-producer.onrender.com/health,https://aviation-worker.onrender.com/health` |
    | producer | `ADSB_PRODUCER_AIRCRAFT` | empty, or e.g. `*` if Render (not the VM) should track |
+   | all three | `OTEL_ENABLED` | `true` to trace; empty or `false` = off (then leave the next three empty) |
+   | all three | `OTEL_EXPORTER_OTLP_ENDPOINT` | the VM's OTLP route `https://otel.sathishkottravel.com`, or Grafana Cloud `https://otlp-gateway-prod-<region>.grafana.net/otlp` |
+   | all three | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` for both examples above (empty = `grpc`) |
+   | all three | `OTEL_EXPORTER_OTLP_HEADERS` | `x-api-key=<key>` for the VM route, `Authorization=Basic%20<base64 of instanceId:token>` for Grafana Cloud |
+
+   Empty values fall back to the code defaults. The VM route only works while the VM and its Jaeger are up; the
+   services keep working either way.
 
    `PRODUCER_TOKEN` is generated once in the `aviation-shared` environment group and used by api and producer.
    If Render gives a service a different `onrender.com` name, update `PRODUCER_URL`/`WAKE_URLS` to match.
@@ -70,6 +77,14 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
 Deploys: `autoDeployTrigger: checksPass` redeploys a service on every push to `main` once the GitHub `deploy` workflow's
 checks pass, and only when its folder, `shared/`, `pyproject.toml` or `uv.lock` changed. Manual redeploys and
 rollbacks are in each service's **Events** tab.
+
+## Changing settings
+
+- **Committed values** (`value:` in `render.yaml`: log level, `MONGODB_DB`, `TELEMETRY_TTL_DAYS`, ADS-B area and poll
+  interval, user agent): change them in `render.yaml` and push. Dashboard edits to these are reverted on the next
+  Blueprint sync. `MONGODB_DB` and `TELEMETRY_TTL_DAYS` must match the VM's `.env` (shared Atlas).
+- **Dashboard values** (`sync: false`: secrets, URLs, tracing, `ADSB_PRODUCER_AIRCRAFT`): edit them on the service's
+  **Environment** tab; saving redeploys that service.
 
 ## Check
 

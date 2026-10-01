@@ -7,7 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Configuration shared by both services, read from environment variables or a local .env file."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Empty values mean "use the default" (e.g. OTEL_ENABLED= or a blank field in a hosting dashboard).
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     log_level: str = "INFO"
 
