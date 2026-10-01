@@ -156,3 +156,10 @@ def test_area_listing_for_another_area(client, manager):
 def test_area_values_are_validated(client, query):
     assert client.get(f"/ingestion/live/aircraft?{query}").status_code == 422
     assert client.post(f"/ingestion/live/start/4ab563?{query}").status_code == 422
+
+
+def test_docs_offer_bearer_auth_for_ingestion_routes_only(client):
+    spec = client.app.openapi()
+    assert spec["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    assert spec["paths"]["/ingestion/live/aircraft"]["get"]["security"] == [{"HTTPBearer": []}]
+    assert "security" not in spec["paths"]["/health"]["get"]
