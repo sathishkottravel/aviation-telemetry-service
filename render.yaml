@@ -43,7 +43,7 @@ services:
     dockerfilePath: ./api-service/Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: commit
     buildFilter:
       paths: [api-service/**, shared/**, pyproject.toml, uv.lock]
     envVars:
@@ -79,7 +79,7 @@ services:
     dockerfilePath: ./adsb-producer/Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: commit
     buildFilter:
       paths: [adsb-producer/**, shared/**, pyproject.toml, uv.lock]
     envVars:
@@ -121,7 +121,7 @@ services:
     dockerContext: .
     # The worker listens on $PORT only for this health check (telemetry_worker/services/health_server.py).
     healthCheckPath: /health
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: commit
     buildFilter:
       paths: [telemetry-worker/**, shared/**, pyproject.toml, uv.lock]
     envVars:
