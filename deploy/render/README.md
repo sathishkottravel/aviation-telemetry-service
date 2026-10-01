@@ -21,10 +21,12 @@ MongoDB Atlas and CloudAMQP are the **same** as the VM's. Nothing under `deploy/
   so don't add an external uptime pinger.
 - **Tracking state** lives in the producer's memory and is lost when it sleeps or redeploys. Aircraft in
   `ADSB_PRODUCER_AIRCRAFT` are tracked again on every wake.
-- **Shared broker and database:** the VM and Render workers share the `telemetry.ingest` queue (each message is stored
-  once) and each api gets its own `telemetry.live` queue, so both see every live update. **Only one producer should
-  track a given aircraft** (VM or Render), otherwise ADSB.lol is polled twice and duplicate points are stored. Set
-  `ADSB_PRODUCER_AIRCRAFT` on one side only.
+- **Separate database, shared broker:** Render uses its own database `aviation-prod` on the same Atlas cluster (the
+  VM uses `aviation`). CloudAMQP is still shared: the VM and Render workers compete for the `telemetry.ingest` queue,
+  so while both workers run, each message is stored in only one of the two databases. Run one stack's worker at a
+  time, or give Render its own CloudAMQP vhost (`RABBITMQ_URL`). Each api gets its own `telemetry.live` queue, so both
+  see every live update. **Only one producer should track a given aircraft** (VM or Render), otherwise ADSB.lol is
+  polled twice. Set `ADSB_PRODUCER_AIRCRAFT` on one side only.
 - 512 MB / 0.1 CPU per service. Tracing is off unless you turn it on per service (see Setup); Render spans carry
   `deployment.environment=render`, so they can be filtered apart from the VM's in the same backend.
 
@@ -70,7 +72,8 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
 
    `PRODUCER_TOKEN` is generated once in the `aviation-shared` environment group and used by api and producer.
    If Render gives a service a different `onrender.com` name, update `PRODUCER_URL`/`WAKE_URLS` to match.
-4. Apply. The first build takes a few minutes per service. No seeding is needed: the database is shared.
+4. Apply. The first build takes a few minutes per service. Then seed Render's database once from your machine:
+   `MONGODB_URI=<Atlas URI> MONGODB_DB=aviation-prod uv run seed-db`.
 5. Point the frontend (or a second frontend build) at `https://aviation-api.onrender.com/graphql` and
    `wss://aviation-api.onrender.com/graphql` for subscriptions.
 
@@ -88,7 +91,7 @@ token (without `Bearer`) and confirm; Swagger then sends it with every call. The
 
 - **Committed values** (`value:` in `render.yaml`: log level, `MONGODB_DB`, `TELEMETRY_TTL_DAYS`, ADS-B area and poll
   interval, user agent): change them in `render.yaml` and push. Dashboard edits to these are reverted on the next
-  Blueprint sync. `MONGODB_DB` and `TELEMETRY_TTL_DAYS` must match the VM's `.env` (shared Atlas).
+  Blueprint sync. `MONGODB_DB` (`aviation-prod`) keeps Render's data apart from the VM's.
 - **Dashboard values** (`sync: false`: secrets, URLs, tracing, `ADSB_PRODUCER_AIRCRAFT`): edit them on the service's
   **Environment** tab; saving redeploys that service.
 
