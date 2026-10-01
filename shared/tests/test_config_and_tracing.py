@@ -90,3 +90,46 @@ def test_empty_values_fall_back_to_defaults(set_settings):
     assert settings.otel_enabled is False
     assert settings.otel_exporter_otlp_protocol == "grpc"
     assert settings.adsb_user_agent.startswith("aviation-telemetry-service/")
+
+
+class TestSpanEventLogHandler:
+    @pytest.fixture
+    def spans(self):
+        import logging
+
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+        from telemetry_shared.observability.tracing import SpanEventLogHandler
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        handler = SpanEventLogHandler(logging.INFO)
+        logging.getLogger().addHandler(handler)
+        yield provider.get_tracer("test"), exporter
+        logging.getLogger().removeHandler(handler)
+
+    def test_logs_inside_a_span_become_events(self, spans):
+        import logging
+
+        tracer, exporter = spans
+        with tracer.start_as_current_span("work"):
+            logging.getLogger("telemetry_worker").warning("dropped %s", "SAS123")
+            logging.getLogger("telemetry_worker").debug("below INFO")
+            logging.getLogger("opentelemetry.exporter").warning("export failed")
+            try:
+                raise ValueError("bad telemetry")
+            except ValueError:
+                logging.getLogger("telemetry_worker").exception("failed")
+        (span,) = exporter.get_finished_spans()
+        logs = [e.attributes for e in span.events if e.name == "log"]
+        assert [(a["log.severity"], a["log.message"]) for a in logs] == [("WARNING", "dropped SAS123"), ("ERROR", "failed")]
+        assert any(e.name == "exception" for e in span.events)
+
+    def test_logs_outside_a_span_are_ignored(self, spans):
+        import logging
+
+        _, exporter = spans
+        logging.getLogger("telemetry_worker").warning("no span")
+        assert exporter.get_finished_spans() == ()

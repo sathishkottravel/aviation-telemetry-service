@@ -4,6 +4,9 @@ With OTEL_ENABLED=false (the default) nothing is configured and the OpenTelemetr
 tracers, so the custom spans below cost next to nothing. When enabled, spans are exported over OTLP/gRPC
 on a background thread; an unreachable collector only produces exporter warnings.
 
+Log records (INFO and above) emitted while a span is active are added to that span as events, which Jaeger shows
+under the span's "Logs". Jaeger has no logs backend, so this is how logs reach it.
+
 Never put connection strings, credentials or tokens into span attributes.
 """
 
@@ -26,6 +29,30 @@ tracer = trace.get_tracer("flight-telemetry")
 """Proxy tracer: safe to use before setup_tracing() runs, and a no-op when tracing is disabled."""
 
 EXPORT_TIMEOUT_S = 5
+MAX_LOG_EVENT_CHARS = 1024
+# Library loggers that are noisy or log about the export itself (a feedback loop).
+_SKIPPED_LOGGERS = ("opentelemetry", "pymongo", "aio_pika", "aiormq", "httpx", "httpcore", "uvicorn")
+
+
+class SpanEventLogHandler(logging.Handler):
+    """Adds each log record emitted inside a recording span to that span as a "log" event."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith(_SKIPPED_LOGGERS):
+            return
+        span = trace.get_current_span()
+        if not span.is_recording():
+            return
+        try:
+            span.add_event("log", {
+                "log.severity": record.levelname,
+                "log.logger": record.name,
+                "log.message": record.getMessage()[:MAX_LOG_EVENT_CHARS],
+            })
+            if record.exc_info and record.exc_info[1] is not None:
+                span.record_exception(record.exc_info[1])
+        except Exception:
+            self.handleError(record)
 
 
 def setup_tracing(default_service_name: str) -> bool:
@@ -49,6 +76,7 @@ def setup_tracing(default_service_name: str) -> bool:
         # pymongo records only the command name (e.g. "insert"), never the query document or the URI.
         PymongoInstrumentor().instrument()
         HTTPXClientInstrumentor().instrument()
+        logging.getLogger().addHandler(SpanEventLogHandler(logging.INFO))
     except Exception:
         logger.warning("Tracing setup failed; continuing without tracing", exc_info=True)
         return False
