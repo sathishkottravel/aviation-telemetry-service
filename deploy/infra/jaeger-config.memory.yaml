@@ -1,7 +1,7 @@
-# Jaeger v2 (all-in-one) with persistent Badger storage, tuned to stay small on the VM (see README.md → Lean settings).
+# Jaeger v2 (all-in-one) with a small in-memory store: no disk, smallest footprint, traces lost on restart.
 # Receives OTLP on 4317 (gRPC) and 4318 (HTTP), serves the UI/API on 16686. All ports are internal to the
 # Docker network "edge"; Caddy exposes the UI and the token-protected OTLP ingest.
-# In-memory alternative: jaeger-config.memory.yaml (JAEGER_CONFIG=jaeger-config.memory.yaml).
+# Select it with JAEGER_CONFIG=jaeger-config.memory.yaml; the default is jaeger-config.yaml (Badger on disk).
 service:
   extensions: [jaeger_storage, jaeger_query, healthcheckv2]
   pipelines:
@@ -24,7 +24,7 @@ extensions:
 
   jaeger_query:
     storage:
-      traces: badger_store
+      traces: memory_store
     max_clock_skew_adjust: 0s
     ui:
       config_file: /etc/jaeger/jaeger-ui.json
@@ -33,17 +33,10 @@ extensions:
 
   jaeger_storage:
     backends:
-      badger_store:
-        badger:
-          directories:
-            keys: /badger/keys
-            values: /badger/values
-          ephemeral: false
-          # Run value-log GC often so expired data is freed soon after the TTL.
-          maintenance_interval: 1m
-          ttl:
-            # Traces older than this are deleted (matches TELEMETRY_TTL_DAYS=1).
-            spans: 24h
+      memory_store:
+        memory:
+          # Oldest traces are evicted beyond this count.
+          max_traces: 2000
 
 receivers:
   otlp:
@@ -69,4 +62,4 @@ processors:
 
 exporters:
   jaeger_storage_exporter:
-    trace_storage: badger_store
+    trace_storage: memory_store
