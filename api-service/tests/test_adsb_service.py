@@ -4,7 +4,12 @@ import httpx
 import pytest
 
 from api_service.services import adsb_service
-from api_service.services.adsb_service import AlreadyTrackingError, NotTrackingError, ProducerUnavailableError
+from api_service.services.adsb_service import (
+    AlreadyTrackingError,
+    InvalidArgumentError,
+    NotTrackingError,
+    ProducerUnavailableError,
+)
 
 STATUS = {"aircraft_id": "*", "running": True, "published_count": 0}
 
@@ -59,3 +64,18 @@ async def test_sends_producer_token_when_configured(set_settings, monkeypatch):
         assert adsb_service._http.headers["Authorization"] == "Bearer p-secret"
     finally:
         await adsb_service.close()
+
+
+async def test_area_arguments_become_query_params(producer):
+    requests, _ = producer
+    await adsb_service.start_tracking("*", latitude=51.5, radius_nm=50)
+    assert dict(requests[0].url.params) == {"latitude": "51.5", "radius_nm": "50"}
+    await adsb_service.tracking_status("*")
+    assert not requests[1].url.params
+
+
+async def test_validation_errors_become_invalid_argument(producer):
+    _, respond = producer
+    respond(httpx.Response(422, json={"detail": [{"loc": ["query", "latitude"], "msg": "less than or equal to 90"}]}))
+    with pytest.raises(InvalidArgumentError, match="latitude: less than or equal to 90"):
+        await adsb_service.start_tracking("x", latitude=91)

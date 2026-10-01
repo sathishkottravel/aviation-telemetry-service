@@ -190,9 +190,9 @@ GraphiQL is served at the same URL. Subscriptions use WebSocket on the same path
 | `airports` | query | All airports |
 | `waypoints` | query | All waypoints |
 | `telemetryHistory(flightId, start, end)` | query | Stored positions, oldest first; `start`/`end` optional |
-| `trackableAircraft` | query | Aircraft in the producer's ADS-B area, nearest first |
+| `trackableAircraft(latitude, longitude, radiusNm)` | query | Aircraft in an ADS-B area, nearest first; no arguments = the producer's polled area |
 | `trackingStatus(aircraftId)` | query | Live tracking state for an ICAO hex, a callsign, or `*` |
-| `startTracking(aircraftId)` | mutation | Start live ADS-B tracking (ICAO hex, callsign or `*`) |
+| `startTracking(aircraftId, latitude, longitude, radiusNm)` | mutation | Start live ADS-B tracking (ICAO hex, callsign or `*`); area arguments move the producer's polled area |
 | `stopTracking(aircraftId)` | mutation | Stop live ADS-B tracking |
 | `liveTelemetry(flightId)` | subscription | List of the latest position of every matching flight (`*` = all), sent on subscribe and when positions change |
 
@@ -234,6 +234,13 @@ query TrackableAircraft {
   }
 }
 
+query TrackableAircraftNearLondon {
+  trackableAircraft(latitude: 51.47, longitude: -0.45, radiusNm: 40) {
+    fetchedAt latitude longitude radiusNm
+    aircraft { icaoHex callsign distanceNm altitude tracked }
+  }
+}
+
 query TrackingStatus {
   trackingStatus(aircraftId: "SAS87C") {
     aircraftId icaoHex running startedAt lastPollAt inArea aircraftCount lastPositionAt publishedCount lastError
@@ -242,6 +249,10 @@ query TrackingStatus {
 
 mutation StartTracking {
   startTracking(aircraftId: "SAS87C") { aircraftId icaoHex running startedAt }
+}
+
+mutation StartTrackingAreaNearLondon {
+  startTracking(aircraftId: "*", latitude: 51.47, longitude: -0.45, radiusNm: 40) { aircraftId running startedAt }
 }
 
 mutation StopTracking {
@@ -331,8 +342,8 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | Method | Path | Purpose | Responses |
 | ------ | ---- | ------- | --------- |
 | `GET` | `/health` | Liveness, and whether RabbitMQ is connected | 200 |
-| `GET` | `/ingestion/live/aircraft` | Aircraft in the configured area, nearest first, with a `tracked` flag | 200, 503 no snapshot yet |
-| `POST` | `/ingestion/live/start/{aircraft_id}` | Start tracking (ICAO hex, callsign or `*`) | 202, 409 already tracked, 503 RabbitMQ down |
+| `GET` | `/ingestion/live/aircraft?latitude=&longitude=&radius_nm=` | Aircraft in an area, nearest first, with a `tracked` flag; no parameters = the polled area | 200, 422 invalid area, 503 no snapshot yet |
+| `POST` | `/ingestion/live/start/{aircraft_id}?latitude=&longitude=&radius_nm=` | Start tracking (ICAO hex, callsign or `*`); area parameters move the polled area | 202, 409 already tracked, 422 invalid area, 503 RabbitMQ down |
 | `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
 | `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
 
@@ -398,12 +409,13 @@ uv run pytest -m ""            # everything
 
 ## Live ADS-B ingestion
 
-The producer queries ADSB.lol for every aircraft within `ADSB_RADIUS_NM` of `ADSB_LATITUDE`/`ADSB_LONGITUDE` and picks out the tracked ones. It uses each aircraft's ICAO hex code as `flight_id` and keeps the callsign in `callsign`. Records without a position are skipped. Telemetry goes through the same RabbitMQ pipeline as `POST /api/telemetry`; the producer never writes to MongoDB.
+The producer queries ADSB.lol for every aircraft in one area and picks out the tracked ones. The area starts as `ADSB_RADIUS_NM` around `ADSB_LATITUDE`/`ADSB_LONGITUDE`; start tracking with area arguments to move it (see **Choose the area** below). It uses each aircraft's ICAO hex code as `flight_id` and keeps the callsign in `callsign`. Records without a position are skipped. Telemetry goes through the same RabbitMQ pipeline as `POST /api/telemetry`; the producer never writes to MongoDB.
 
-List the aircraft you can track, nearest first. The list reuses the poller's latest snapshot, so it doesn't add ADSB.lol requests:
+List the aircraft you can track, nearest first. Without parameters the list reuses the poller's latest snapshot, so it doesn't add ADSB.lol requests; with area parameters it fetches that area once:
 
 ```sh
-curl http://localhost:8001/ingestion/live/aircraft   # fetched_at, radius_nm, aircraft[{icao_hex, callsign, distance_nm, tracked, ...}]
+curl http://localhost:8001/ingestion/live/aircraft   # fetched_at, latitude, longitude, radius_nm, aircraft[{icao_hex, callsign, distance_nm, tracked, ...}]
+curl "http://localhost:8001/ingestion/live/aircraft?latitude=51.47&longitude=-0.45&radius_nm=40"   # another area
 ```
 
 Or from GraphQL (the API calls the producer at `PRODUCER_URL`):
@@ -414,6 +426,13 @@ query TrackableAircraft {
     fetchedAt
     radiusNm
     aircraft { icaoHex callsign distanceNm altitude groundSpeed tracked }
+  }
+}
+
+query TrackableAircraftElsewhere {
+  trackableAircraft(latitude: 51.47, longitude: -0.45, radiusNm: 40) {
+    fetchedAt latitude longitude radiusNm
+    aircraft { icaoHex callsign distanceNm altitude tracked }
   }
 }
 ```
@@ -441,6 +460,31 @@ subscription Live {
 
 mutation Stop {
   stopTracking(aircraftId: "SAS87C") { icaoHex running publishedCount }
+}
+```
+
+**Choose the area.** The producer polls one area, shared by every tracked aircraft (one ADSB.lol request per poll). It starts as `ADSB_LATITUDE`/`ADSB_LONGITUDE`/`ADSB_RADIUS_NM`. `startTracking` with any of `latitude`, `longitude`, `radiusNm` (REST: `radius_nm`) moves it there; values left out come from those env defaults, and a start without area arguments leaves the area as it is. `trackableAircraft` with area arguments lists that area without moving the polled one (one extra ADSB.lol request). Limits: latitude ±90, longitude ±180, radius up to 250 NM; invalid values return `BAD_USER_INPUT` in GraphQL and 422 over REST. The area resets to the defaults when the producer restarts.
+
+```graphql
+# Look around Heathrow first (does not move the polled area)
+query AreaLondon {
+  trackableAircraft(latitude: 51.47, longitude: -0.45, radiusNm: 40) {
+    latitude longitude radiusNm aircraft { icaoHex callsign distanceNm tracked }
+  }
+}
+
+# Track every aircraft there: the producer now polls this area for all tracked aircraft
+mutation TrackLondon {
+  startTracking(aircraftId: "*", latitude: 51.47, longitude: -0.45, radiusNm: 40) { aircraftId running }
+}
+
+# Only the radius given: latitude/longitude come from ADSB_LATITUDE/ADSB_LONGITUDE
+mutation TrackHomeWide {
+  startTracking(aircraftId: "SAS87C", radiusNm: 150) { aircraftId running }
+}
+
+subscription LiveLondon {
+  liveTelemetry(flightId: "*") { flightId callsign latitude longitude altitude }
 }
 ```
 
@@ -476,17 +520,20 @@ Track an aircraft by ICAO hex code or callsign (case-insensitive):
 curl -X POST http://localhost:8001/ingestion/live/start/4ab563   # 202; 409 if already tracked; 503 if RabbitMQ is down
 curl http://localhost:8001/ingestion/live/status/4ab563          # icao_hex, running, in_area, published_count, last_error, ...
 curl -X POST http://localhost:8001/ingestion/live/stop/4ab563    # 200; 404 if not tracked
+
+# Track everything around Heathrow: moves the polled area (missing values come from the ADSB_* defaults)
+curl -X POST "http://localhost:8001/ingestion/live/start/*?latitude=51.47&longitude=-0.45&radius_nm=40"   # 422 if out of range
 ```
 
 Then query `telemetryHistory(flightId: "4ab563")` or subscribe to `liveTelemetry(flightId: "4ab563")` on the API. Always use the lowercase ICAO hex (`icaoHex`) as `flightId`, even if you started tracking by callsign.
 
-Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from startup. Tracking lives in memory, so a restart forgets aircraft started over HTTP.
+Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from startup, in the default area. Tracking lives in memory, so a restart forgets aircraft started over HTTP and resets the area to the defaults below.
 
 | Setting | Default | Meaning |
 | ------- | ------- | ------- |
 | `ADSB_POLL_INTERVAL` | `5` | Seconds between polls |
-| `ADSB_LATITUDE`, `ADSB_LONGITUDE` | `59.3`, `18.0` | Centre of the polled area |
-| `ADSB_RADIUS_NM` | `100` | Radius of the polled area in nautical miles |
+| `ADSB_LATITUDE`, `ADSB_LONGITUDE` | `59.3`, `18.0` | Default centre of the polled area (overridable per request) |
+| `ADSB_RADIUS_NM` | `100` | Default radius in nautical miles (overridable per request, max 250) |
 | `ADSB_PRODUCER_AIRCRAFT` | empty | Aircraft tracked from startup (`*` = whole area) |
 | `ADSB_USER_AGENT` | project name + repo URL | ADSB.lol rejects generic User-Agents with 403 |
 | `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer (`trackableAircraft`, tracking mutations) |

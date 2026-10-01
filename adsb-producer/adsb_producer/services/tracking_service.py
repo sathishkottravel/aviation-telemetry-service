@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from telemetry_shared.adsb.ingestion import ALL_AIRCRAFT, AdsbAreaPoller, PollResult, list_area_aircraft
+from telemetry_shared.adsb.ingestion import ALL_AIRCRAFT, AdsbAreaPoller, Area, PollResult, list_area_aircraft
 from telemetry_shared.config import Settings
 from telemetry_shared.messaging.rabbitmq import RabbitMQ
 from telemetry_shared.models import AreaAircraftList, TrackingStatus
@@ -72,7 +72,8 @@ class TrackingManager:
     and can coexist with specific IDs; an aircraft covered by both is still published once per poll.
 
     Start and stop only add or remove IDs; the poller picks up the current set on its next tick, fetches
-    the area once, and filters locally. Nothing is persisted; a restart forgets the set.
+    the area once, and filters locally. Starting with an area moves the poller's single area, for every
+    tracked ID. Nothing is persisted; a restart forgets the set and the area.
     """
 
     def __init__(self, poller: AdsbAreaPoller, rabbitmq: RabbitMQ, settings: Settings) -> None:
@@ -99,12 +100,14 @@ class TrackingManager:
     def aircraft_ids(self) -> set[str]:
         return set(self._tracked)
 
-    def start(self, aircraft_id: str) -> TrackingStatus:
+    def start(self, aircraft_id: str, area: Area | None = None) -> TrackingStatus:
         key = _normalize_id(aircraft_id)
         if key in self._tracked:
             raise AlreadyTrackingError(key)
         if not self._rabbitmq.is_connected:
             raise IngestUnavailableError
+        if area is not None:
+            self._poller.set_area(area)
         # A hex ID is already resolved; a callsign resolves when the poller first finds the aircraft.
         tracked = self._tracked[key] = _TrackedAircraft(key, icao_hex=key if _ICAO_HEX.fullmatch(key) else None)
         return tracked.status(running=True)
@@ -120,21 +123,25 @@ class TrackingManager:
         tracked = self._tracked.get(key)
         return tracked.status(running=True) if tracked else TrackingStatus(aircraft_id=key, running=False)
 
-    async def list_area_aircraft(self) -> AreaAircraftList:
-        """Aircraft currently in the configured area, marked if already tracked. Reuses the poller's snapshot."""
-        snapshot = await self._poller.latest_snapshot()
+    async def list_area_aircraft(self, area: Area | None = None) -> AreaAircraftList:
+        """Aircraft in the area (default: the polled one), marked if already tracked.
+
+        The polled area reuses the poller's snapshot; another area costs one ADSB.lol request.
+        """
+        area = area or self._poller.area
+        snapshot = await self._poller.latest_snapshot(area)
         aircraft = list_area_aircraft(snapshot)
         for a in aircraft:
             a.tracked = (
-                ALL_AIRCRAFT in self._tracked
+                (ALL_AIRCRAFT in self._tracked and area == self._poller.area)
                 or a.icao_hex in self._tracked
                 or (a.callsign or "").lower() in self._tracked
             )
         return AreaAircraftList(
             fetched_at=snapshot.now,
-            latitude=self._settings.adsb_latitude,
-            longitude=self._settings.adsb_longitude,
-            radius_nm=self._settings.adsb_radius_nm,
+            latitude=area.latitude,
+            longitude=area.longitude,
+            radius_nm=area.radius_nm,
             aircraft=aircraft,
         )
 

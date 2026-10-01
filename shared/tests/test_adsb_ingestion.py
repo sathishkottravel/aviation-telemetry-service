@@ -6,6 +6,7 @@ from telemetry_shared.adsb.client import AdsbRateLimitedError, AdsbSnapshot
 from telemetry_shared.adsb.ingestion import (
     ALL_AIRCRAFT,
     AdsbAreaPoller,
+    Area,
     index_by_id,
     list_area_aircraft,
     normalize,
@@ -71,9 +72,11 @@ class FakeClient:
     def __init__(self, snapshots):
         self.snapshots = list(snapshots)
         self.fetches = 0
+        self.areas = []
 
     async def fetch_area(self, *args):
         self.fetches += 1
+        self.areas.append(args)
         result = self.snapshots.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -132,3 +135,22 @@ class TestAreaPoller:
         poller = AdsbAreaPoller(FakeClient([AdsbRateLimitedError("limited")]), FakeRabbit(), get_settings())
         with pytest.raises(AdsbRateLimitedError):
             await poller.latest_snapshot()
+
+    async def test_area_defaults_to_settings_and_set_area_moves_polling(self):
+        settings = get_settings()
+        client = FakeClient([snapshot(NOW, aircraft()), snapshot(NOW, aircraft())])
+        poller = AdsbAreaPoller(client, FakeRabbit(), settings)
+        assert poller.area == Area(settings.adsb_latitude, settings.adsb_longitude, settings.adsb_radius_nm)
+        await poller.poll_once({"4ab563"})
+        poller.set_area(Area(51.5, -0.1, 50))
+        await poller.poll_once({"4ab563"})
+        assert client.areas == [(settings.adsb_latitude, settings.adsb_longitude, settings.adsb_radius_nm),
+                                (51.5, -0.1, 50)]
+
+    async def test_snapshot_of_another_area_is_fetched_but_not_kept(self):
+        client = FakeClient([snapshot(NOW, aircraft()), snapshot(NOW, aircraft("4ab567", "SAS4225"))])
+        poller = AdsbAreaPoller(client, FakeRabbit(), get_settings())
+        polled = await poller.latest_snapshot()
+        other = await poller.latest_snapshot(Area(51.5, -0.1, 50))
+        assert other is not polled and client.areas[1] == (51.5, -0.1, 50)
+        assert await poller.latest_snapshot() is polled  # the polled area's snapshot is untouched

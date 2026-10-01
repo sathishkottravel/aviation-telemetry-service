@@ -14,7 +14,7 @@ from adsb_producer.services.tracking_service import (
     TrackingManager,
 )
 from telemetry_shared.adsb.client import AdsbSnapshot
-from telemetry_shared.adsb.ingestion import AdsbAreaPoller
+from telemetry_shared.adsb.ingestion import AdsbAreaPoller, Area
 from telemetry_shared.config import get_settings
 
 NOW = datetime(2026, 9, 29, 12, tzinfo=UTC)
@@ -25,7 +25,11 @@ AREA = [
 
 
 class FakeClient:
+    def __init__(self):
+        self.areas = []
+
     async def fetch_area(self, *args):
+        self.areas.append(args)
         return AdsbSnapshot(NOW, AREA)
 
 
@@ -127,3 +131,28 @@ def test_producer_token_guards_ingestion_routes_but_not_health(client, set_setti
     assert client.get("/ingestion/live/status/*").status_code == 401
     assert client.get("/ingestion/live/status/*", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/ingestion/live/status/*", headers={"Authorization": "Bearer p-secret"}).status_code == 200
+
+
+def test_start_with_area_moves_the_poller_and_fills_missing_values_from_settings(client, manager):
+    settings = get_settings()
+    assert client.post("/ingestion/live/start/*?latitude=51.5&longitude=-0.1").status_code == 202
+    assert manager._poller.area == Area(51.5, -0.1, settings.adsb_radius_nm)
+    assert client.post("/ingestion/live/start/4ab563").status_code == 202  # no area: unchanged
+    assert manager._poller.area.latitude == 51.5
+    body = client.get("/ingestion/live/aircraft").json()
+    assert (body["latitude"], body["longitude"]) == (51.5, -0.1)
+
+
+def test_area_listing_for_another_area(client, manager):
+    client.post("/ingestion/live/start/*")
+    body = client.get("/ingestion/live/aircraft?radius_nm=25").json()
+    assert body["radius_nm"] == 25
+    assert manager._poller._client.areas[-1][2] == 25
+    assert not any(a["tracked"] for a in body["aircraft"])  # '*' covers the polled area, not this one
+    assert manager._poller.area.radius_nm == get_settings().adsb_radius_nm  # listing does not move polling
+
+
+@pytest.mark.parametrize("query", ["latitude=91", "longitude=-181", "radius_nm=0", "radius_nm=251"])
+def test_area_values_are_validated(client, query):
+    assert client.get(f"/ingestion/live/aircraft?{query}").status_code == 422
+    assert client.post(f"/ingestion/live/start/4ab563?{query}").status_code == 422
