@@ -82,3 +82,11 @@ def test_telemetry_attributes_hold_ids_but_nothing_else():
         "telemetry.timestamp": "2026-09-29T00:00:00+00:00",
         "telemetry.source": "adsb",
     }
+
+
+def test_empty_values_fall_back_to_defaults(set_settings):
+    set_settings(otel_enabled="", otel_exporter_otlp_protocol="", adsb_user_agent="")
+    settings = get_settings()
+    assert settings.otel_enabled is False
+    assert settings.otel_exporter_otlp_protocol == "grpc"
+    assert settings.adsb_user_agent.startswith("aviation-telemetry-service/")

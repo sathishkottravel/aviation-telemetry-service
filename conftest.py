@@ -21,7 +21,11 @@ os.environ.update(
     }
 )
 
-from telemetry_shared.config import get_settings  # noqa: E402  (must follow the env setup above)
+from telemetry_shared.config import Settings, get_settings  # noqa: E402  (must follow the env setup above)
+
+# Never read the developer's .env: empty values are ignored (env_ignore_empty), so the empty overrides above could
+# otherwise fall through to it.
+Settings.model_config["env_file"] = None
 
 
 @pytest.fixture(autouse=True)
