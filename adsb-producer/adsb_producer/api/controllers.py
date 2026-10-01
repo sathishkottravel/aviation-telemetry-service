@@ -1,7 +1,8 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from adsb_producer.services.tracking_service import (
     AlreadyTrackingError,
@@ -18,14 +19,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def require_producer_token(authorization: str | None = Header(default=None)) -> None:
+# A security scheme rather than a plain header parameter: Swagger UI never sends a header parameter named
+# Authorization, but shows an Authorize button for this.
+bearer = HTTPBearer(auto_error=False, description="PRODUCER_TOKEN (paste the raw token, without 'Bearer')")
+
+
+def require_producer_token(credentials: HTTPAuthorizationCredentials | None = Security(bearer)) -> None:
     """Checks 'Authorization: Bearer <PRODUCER_TOKEN>' when PRODUCER_TOKEN is set (open when empty)."""
     expected = get_settings().producer_token
     if not expected:
         return
-    scheme, _, token = (authorization or "").partition(" ")
-    if not (scheme.lower() == "bearer" and secrets.compare_digest(token.strip(), expected)):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing producer token")
+    if credentials is None or not secrets.compare_digest(credentials.credentials, expected):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Invalid or missing producer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 # /health stays open; the tracking routes need the token.

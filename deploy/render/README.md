@@ -78,6 +78,10 @@ Deploys: `autoDeployTrigger: checksPass` redeploys a service on every push to `m
 checks pass, and only when its folder, `shared/`, `pyproject.toml` or `uv.lock` changed. Manual redeploys and
 rollbacks are in each service's **Events** tab.
 
+**Producer `/docs`:** the `/ingestion/live/*` routes need `PRODUCER_TOKEN`. Click **Authorize**, paste the raw
+token (without `Bearer`) and confirm; Swagger then sends it with every call. The value is in the Render dashboard →
+**Env Groups → aviation-shared → PRODUCER_TOKEN** (reveal). The same applies to curl, as shown in Check below.
+
 ## Changing settings
 
 - **Committed values** (`value:` in `render.yaml`: log level, `MONGODB_DB`, `TELEMETRY_TTL_DAYS`, ADS-B area and poll
@@ -94,5 +98,6 @@ curl $API/health
 curl https://aviation-producer.onrender.com/health
 curl https://aviation-worker.onrender.com/health          # {"status":"ok","rabbitmq":true}
 curl https://aviation-producer.onrender.com/ingestion/live/status/%2A   # 401 without the producer token
+curl -H "Authorization: Bearer $PRODUCER_TOKEN" https://aviation-producer.onrender.com/ingestion/live/aircraft
 E2E_API_URL=$API E2E_API_TOKEN=... uv run pytest -m e2e
 ```
