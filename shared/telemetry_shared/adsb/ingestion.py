@@ -95,6 +95,15 @@ def list_area_aircraft(snapshot: AdsbSnapshot) -> list[AreaAircraft]:
     return sorted(aircraft, key=lambda a: (a.distance_nm is None, a.distance_nm))
 
 
+@dataclass(frozen=True)
+class Area:
+    """A circle to fetch from ADSB.lol."""
+
+    latitude: float
+    longitude: float
+    radius_nm: float
+
+
 @dataclass
 class PollResult:
     matched: int
@@ -110,36 +119,47 @@ class PollResult:
 
 
 class AdsbAreaPoller:
-    """A single loop that fetches the configured area once per interval and publishes the requested aircraft.
+    """A single loop that fetches one area once per interval and publishes the requested aircraft.
 
-    The set of requested aircraft is read on every tick, so adding or removing an ID takes effect on the
-    next poll. No request is made while the set is empty. The last snapshot is kept so the area can be
-    listed without extra upstream requests.
+    The area starts as ADSB_LATITUDE/LONGITUDE/RADIUS_NM and can be moved with set_area(); it is shared by
+    every requested aircraft. The set of requested aircraft is read on every tick, so adding or removing an
+    ID takes effect on the next poll. No request is made while the set is empty. The last snapshot of the
+    area is kept so it can be listed without extra upstream requests.
     """
 
     def __init__(self, client: AdsbLolClient, rabbitmq: RabbitMQ, settings: Settings) -> None:
         self._client = client
         self._rabbitmq = rabbitmq
         self._settings = settings
+        self.area = Area(settings.adsb_latitude, settings.adsb_longitude, settings.adsb_radius_nm)
         self._last_published: dict[str, datetime] = {}
         self._lock = asyncio.Lock()
         self._snapshot: AdsbSnapshot | None = None
         self._fetched_at = 0.0
         self._published_last_poll = 0
 
-    async def _fetch(self) -> AdsbSnapshot:
+    def set_area(self, area: Area) -> None:
+        """Poll a different area from the next tick on."""
+        if area != self.area:
+            self.area, self._snapshot = area, None
+
+    async def _fetch(self, area: Area | None = None) -> AdsbSnapshot:
+        area = area or self.area
         async with self._lock:
-            snapshot = await self._client.fetch_area(
-                self._settings.adsb_latitude, self._settings.adsb_longitude, self._settings.adsb_radius_nm
-            )
-            self._snapshot, self._fetched_at = snapshot, time.monotonic()
+            snapshot = await self._client.fetch_area(area.latitude, area.longitude, area.radius_nm)
+            # Keep it only if it is still the polled area (set_area may have run during the request).
+            if area == self.area:
+                self._snapshot, self._fetched_at = snapshot, time.monotonic()
             return snapshot
 
-    async def latest_snapshot(self) -> AdsbSnapshot:
-        """The latest area snapshot, fetching only if the poller hasn't refreshed it recently.
+    async def latest_snapshot(self, area: Area | None = None) -> AdsbSnapshot:
+        """A snapshot of the given area (default: the polled one).
 
-        If a fetch fails (rate limited, upstream down) an older snapshot is returned when there is one.
+        For the polled area, a recent poll is reused, and if a fetch fails (rate limited, upstream down) an
+        older snapshot is returned when there is one. Any other area is fetched directly.
         """
+        if area is not None and area != self.area:
+            return await self._fetch(area)
         # 1.5x: a poll cycle takes the interval plus request time, so a running poller always counts as fresh.
         max_age_s = self._settings.adsb_poll_interval * 1.5
         if self._snapshot is not None and time.monotonic() - self._fetched_at < max_age_s:

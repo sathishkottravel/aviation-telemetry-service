@@ -86,7 +86,8 @@ services:
       - fromGroup: aviation-shared
       - key: RABBITMQ_URL
         sync: false
-      # ADSB.lol area: a circle around this point. It rate-limits aggressively; keep the interval at 10 s or more.
+      # Default ADSB.lol area (requests can pass latitude/longitude/radius_nm to move it). ADSB.lol rate-limits
+      # aggressively; keep the interval at 10 s or more.
       - key: ADSB_LATITUDE
         value: "59.3"
       - key: ADSB_LONGITUDE

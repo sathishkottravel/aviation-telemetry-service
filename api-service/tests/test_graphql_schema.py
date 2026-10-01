@@ -7,7 +7,12 @@ import pytest
 
 from api_service.graphql.schema import schema
 from api_service.services import adsb_service, navigation_service, telemetry_service
-from api_service.services.adsb_service import AlreadyTrackingError, NotTrackingError, ProducerUnavailableError
+from api_service.services.adsb_service import (
+    AlreadyTrackingError,
+    InvalidArgumentError,
+    NotTrackingError,
+    ProducerUnavailableError,
+)
 from telemetry_shared.models import (
     Airport,
     AreaAircraft,
@@ -106,6 +111,8 @@ async def test_tracking_mutations_and_status(monkeypatch):
      ProducerUnavailableError("cannot reach producer"), "PRODUCER_UNAVAILABLE"),
     ("{ trackableAircraft { fetchedAt } }", "list_trackable_aircraft",
      ProducerUnavailableError("cannot reach producer"), "PRODUCER_UNAVAILABLE"),
+    ('mutation { startTracking(aircraftId: "x", latitude: 91) { running } }', "start_tracking",
+     InvalidArgumentError("latitude: too large"), "BAD_USER_INPUT"),
 ])
 async def test_producer_errors_carry_codes(monkeypatch, operation, service_fn, error, code):
     stub(monkeypatch, adsb_service, service_fn, error)
@@ -151,3 +158,16 @@ async def test_live_telemetry_single_flight_is_a_one_element_list(live):
     live.publish(position("SAS123", 2))
     assert (await asyncio.wait_for(pending, 2)).data == {"liveTelemetry": [{"flightId": "SAS123"}]}
     await stream.aclose()
+
+
+async def test_area_arguments_are_passed_to_the_producer(monkeypatch):
+    calls = []
+    area = AreaAircraftList(fetched_at=T0, latitude=51.5, longitude=-0.1, radius_nm=50, aircraft=[])
+    stub(monkeypatch, adsb_service, "list_trackable_aircraft", lambda *a: calls.append(a) or area)
+    stub(monkeypatch, adsb_service, "start_tracking",
+         lambda *a: calls.append(a) or TrackingStatus(aircraft_id="*", running=True))
+    result = await run("{ trackableAircraft(latitude: 51.5, longitude: -0.1, radiusNm: 50) { latitude radiusNm } }")
+    assert result.data == {"trackableAircraft": {"latitude": 51.5, "radiusNm": 50.0}}
+    await run('mutation { startTracking(aircraftId: "*", radiusNm: 50) { running } }')
+    await run("{ trackableAircraft { latitude } }")
+    assert calls == [(51.5, -0.1, 50.0), ("*", None, None, 50.0), (None, None, None)]

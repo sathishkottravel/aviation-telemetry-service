@@ -7,7 +7,12 @@ from graphql import GraphQLError
 
 from api_service.graphql.types import Airport, Flight, Telemetry, TrackableArea, TrackingStatus, Waypoint
 from api_service.services import adsb_service, navigation_service, telemetry_service
-from api_service.services.adsb_service import AlreadyTrackingError, NotTrackingError, ProducerUnavailableError
+from api_service.services.adsb_service import (
+    AlreadyTrackingError,
+    InvalidArgumentError,
+    NotTrackingError,
+    ProducerUnavailableError,
+)
 from api_service.services.live_broadcaster import broadcaster
 
 
@@ -18,6 +23,8 @@ def _producer_error(exc: Exception) -> GraphQLError:
             return GraphQLError(str(exc), extensions={"code": "ALREADY_TRACKING"})
         case NotTrackingError():
             return GraphQLError(str(exc), extensions={"code": "NOT_TRACKING"})
+        case InvalidArgumentError():
+            return GraphQLError(str(exc), extensions={"code": "BAD_USER_INPUT"})
         case _:
             return GraphQLError(f"ADS-B producer unavailable: {exc}", extensions={"code": "PRODUCER_UNAVAILABLE"})
 
@@ -48,11 +55,18 @@ class Query:
         history = await telemetry_service.get_history(flight_id, start, end)
         return [Telemetry.from_model(t) for t in history]
 
-    @strawberry.field(description="Aircraft in the ADS-B producer's area that can be tracked, nearest first.")
-    async def trackable_aircraft(self) -> TrackableArea:
+    @strawberry.field(description=(
+        "Aircraft that can be tracked, nearest first. Without arguments: the producer's polled area. "
+        "With any of latitude/longitude/radiusNm (max 250 NM): that area, missing values from the producer's defaults."
+    ))
+    async def trackable_aircraft(
+        self, latitude: float | None = None, longitude: float | None = None, radius_nm: float | None = None
+    ) -> TrackableArea:
         try:
-            return TrackableArea.from_model(await adsb_service.list_trackable_aircraft())
-        except ProducerUnavailableError as exc:
+            return TrackableArea.from_model(
+                await adsb_service.list_trackable_aircraft(latitude, longitude, radius_nm)
+            )
+        except (InvalidArgumentError, ProducerUnavailableError) as exc:
             raise _producer_error(exc) from exc
 
     @strawberry.field(description="Live tracking state for an aircraft (ICAO hex or callsign), or '*' for the whole area.")
@@ -65,11 +79,23 @@ class Query:
 
 @strawberry.type
 class Mutation:
-    @strawberry.mutation(description="Start live ADS-B tracking for an aircraft (ICAO hex or callsign), or '*' for every aircraft in the area.")
-    async def start_tracking(self, aircraft_id: strawberry.ID) -> TrackingStatus:
+    @strawberry.mutation(description=(
+        "Start live ADS-B tracking for an aircraft (ICAO hex or callsign), or '*' for every aircraft in the area. "
+        "With any of latitude/longitude/radiusNm (max 250 NM), the producer moves its single polled area there "
+        "(for every tracked aircraft); missing values come from the producer's defaults."
+    ))
+    async def start_tracking(
+        self,
+        aircraft_id: strawberry.ID,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        radius_nm: float | None = None,
+    ) -> TrackingStatus:
         try:
-            return TrackingStatus.from_model(await adsb_service.start_tracking(aircraft_id))
-        except (AlreadyTrackingError, ProducerUnavailableError) as exc:
+            return TrackingStatus.from_model(
+                await adsb_service.start_tracking(aircraft_id, latitude, longitude, radius_nm)
+            )
+        except (AlreadyTrackingError, InvalidArgumentError, ProducerUnavailableError) as exc:
             raise _producer_error(exc) from exc
 
     @strawberry.mutation(description="Stop live ADS-B tracking for an aircraft, or '*' to stop area-wide tracking.")
