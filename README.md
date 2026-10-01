@@ -13,6 +13,10 @@ The repository contains three independent services and a shared package:
 
 ## Architecture
 
+![System overview: frontend on GitHub Pages, api/producer/worker on Render, MongoDB Atlas, CloudAMQP and ADSB.lol as external services, Caddy and Jaeger on a DigitalOcean droplet](docs/system-design.svg)
+
+Deployments: the frontend on GitHub Pages, the three services on Render ([deploy/render/README.md](deploy/render/README.md)), and Caddy + Jaeger on a DigitalOcean droplet ([deploy/infra/README.md](deploy/infra/README.md)). The message flow inside the backend:
+
 ```
 POST /api/telemetry (api-service)      adsb-producer: ADSB.lol → filter → normalize
         │                                       │

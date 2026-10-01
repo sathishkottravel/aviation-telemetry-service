@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 810" width="1300" height="810" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Aviation Telemetry Service: system overview</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      .group { fill: #f8fafc; stroke: #94a3b8; stroke-width: 1.5; }
+      .group-title { font-size: 15px; font-weight: 600; fill: #0f172a; }
+      .group-sub { font-size: 12px; fill: #64748b; text-anchor: end; }
+      .box { fill: #ffffff; stroke: #334155; stroke-width: 1.5; }
+      .ext { fill: #fff7ed; stroke: #c2410c; stroke-width: 1.5; }
+      .queue { fill: #ffffff; stroke: #fdba74; stroke-width: 1; }
+      .infra { fill: #eef2ff; stroke: #4338ca; stroke-width: 1.5; }
+      .web { fill: #ecfdf5; stroke: #047857; stroke-width: 1.5; }
+      .name { font-size: 15px; font-weight: 600; fill: #0f172a; }
+      .detail { font-size: 12px; fill: #475569; }
+      .flow { stroke: #334155; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+      .flow-both { stroke: #334155; stroke-width: 1.6; fill: none; marker-start: url(#arrow); marker-end: url(#arrow); }
+      .opt { stroke: #64748b; stroke-width: 1.4; stroke-dasharray: 6 4; fill: none; marker-end: url(#arrow-muted); }
+      .label { font-size: 12px; fill: #1e293b; }
+      .label-muted { font-size: 12px; fill: #64748b; }
+    </style>
+  </defs>
+
+  <rect width="1300" height="810" fill="#ffffff"/>
+  <text x="30" y="36" font-size="20" font-weight="700" fill="#0f172a">Aviation Telemetry Service: system overview</text>
+
+  <!-- ===== GitHub Pages ===== -->
+  <rect class="group" x="30" y="230" width="230" height="150" rx="10"/>
+  <text class="group-title" x="45" y="255">GitHub Pages</text>
+  <rect class="web" x="45" y="270" width="200" height="90" rx="8"/>
+  <text class="name" x="60" y="298">Frontend</text>
+  <text class="detail" x="60" y="318">Map UI, Apollo Client</text>
+  <text class="detail" x="60" y="336">live + playback</text>
+
+  <!-- ===== Render ===== -->
+  <rect class="group" x="310" y="60" width="420" height="510" rx="10"/>
+  <text class="group-title" x="325" y="85">Render</text>
+  <text class="group-sub" x="715" y="85">3 free Docker web services · deploy on push to main</text>
+
+  <rect class="box" x="350" y="100" width="340" height="80" rx="8"/>
+  <text class="name" x="365" y="128">adsb-producer</text>
+  <text class="detail" x="365" y="148">FastAPI · one area poller (lat/lon/radius)</text>
+  <text class="detail" x="365" y="166">owns tracking state (in memory)</text>
+
+  <rect class="box" x="350" y="255" width="340" height="100" rx="8"/>
+  <text class="name" x="365" y="283">api-service</text>
+  <text class="detail" x="365" y="303">FastAPI + Strawberry GraphQL</text>
+  <text class="detail" x="365" y="321">queries · history · liveTelemetry subscription</text>
+  <text class="detail" x="365" y="339">in-memory live fan-out · POST /api/telemetry</text>
+
+  <rect class="box" x="350" y="440" width="340" height="80" rx="8"/>
+  <text class="name" x="365" y="468">telemetry-worker</text>
+  <text class="detail" x="365" y="488">validates telemetry, writes history,</text>
+  <text class="detail" x="365" y="506">publishes live updates</text>
+
+  <!-- ===== External services ===== -->
+  <rect class="group" x="880" y="60" width="390" height="510" rx="10"/>
+  <text class="group-title" x="895" y="85">External services</text>
+
+  <rect class="ext" x="910" y="100" width="330" height="80" rx="8"/>
+  <text class="name" x="925" y="128">ADSB.lol</text>
+  <text class="detail" x="925" y="148">public ADS-B API, rate-limited</text>
+  <text class="detail" x="925" y="166">/v2/point/{lat}/{lon}/{radius}</text>
+
+  <rect class="ext" x="910" y="225" width="330" height="160" rx="8"/>
+  <text class="name" x="925" y="253">CloudAMQP (RabbitMQ)</text>
+  <rect class="queue" x="925" y="266" width="300" height="48" rx="6"/>
+  <text class="label" x="937" y="286" font-weight="600">telemetry.ingest</text>
+  <text class="detail" x="937" y="304">direct exchange → durable queue</text>
+  <rect class="queue" x="925" y="324" width="300" height="48" rx="6"/>
+  <text class="label" x="937" y="344" font-weight="600">telemetry.live</text>
+  <text class="detail" x="937" y="362">fanout → one queue per api instance</text>
+
+  <rect class="ext" x="910" y="440" width="330" height="80" rx="8"/>
+  <text class="name" x="925" y="468">MongoDB Atlas</text>
+  <text class="detail" x="925" y="488">airports · waypoints · flights · telemetry</text>
+  <text class="detail" x="925" y="506">db aviation-prod · telemetry TTL 24h</text>
+
+  <!-- ===== DigitalOcean droplet ===== -->
+  <rect class="group" x="310" y="630" width="960" height="130" rx="10"/>
+  <text class="group-title" x="325" y="655">DigitalOcean droplet</text>
+  <text class="group-sub" x="1255" y="655">Docker network "edge"</text>
+
+  <rect class="infra" x="350" y="670" width="300" height="75" rx="8"/>
+  <text class="name" x="365" y="697">Caddy</text>
+  <text class="detail" x="365" y="717">TLS · otel.* (OTLP ingest, x-api-key)</text>
+  <text class="detail" x="365" y="734">jaeger.* (UI)</text>
+
+  <rect class="infra" x="910" y="670" width="330" height="75" rx="8"/>
+  <text class="name" x="925" y="697">Jaeger v2</text>
+  <text class="detail" x="925" y="717">traces + span logs · 24h retention</text>
+  <text class="detail" x="925" y="734">lean: 384 MB limit, Badger or in-memory</text>
+
+  <!-- ===== Developer ===== -->
+  <rect class="group" x="30" y="670" width="230" height="75" rx="10"/>
+  <text class="name" x="45" y="698">Developer</text>
+  <text class="detail" x="45" y="718">browser: Jaeger UI,</text>
+  <text class="detail" x="45" y="735">GraphiQL, Render dashboard</text>
+
+  <!-- ===== Flows ===== -->
+  <!-- Frontend <-> api -->
+  <path class="flow-both" d="M245,315 L350,315"/>
+  <text class="label" x="262" y="303">GraphQL</text>
+  <text class="label-muted" x="262" y="335">HTTPS / WSS</text>
+  <text class="label-muted" x="262" y="351">+ API_TOKEN</text>
+
+  <!-- api -> producer -->
+  <path class="flow" d="M520,255 L520,180"/>
+  <text class="label" x="530" y="213">tracking REST</text>
+  <text class="label-muted" x="530" y="229">+ PRODUCER_TOKEN</text>
+
+  <!-- api -> producer/worker keep-warm -->
+  <path class="opt" d="M520,355 L520,440"/>
+  <text class="label-muted" x="530" y="393">keep-warm /health pings</text>
+  <text class="label-muted" x="530" y="409">(producer + worker)</text>
+
+  <!-- producer -> ADSB.lol -->
+  <path class="flow" d="M690,140 L910,140"/>
+  <text class="label" x="770" y="132">poll area</text>
+
+  <!-- producer -> ingest -->
+  <path class="flow" d="M690,165 C800,165 800,278 925,278"/>
+  <text class="label" x="808" y="214">publish</text>
+
+  <!-- api -> ingest -->
+  <path class="flow" d="M690,290 C800,290 820,300 925,300"/>
+  <text class="label" x="740" y="283">publish</text>
+
+  <!-- live -> api -->
+  <path class="flow" d="M925,348 L690,330"/>
+  <text class="label" x="760" y="328">live updates</text>
+
+  <!-- api -> Atlas (reads) -->
+  <path class="flow" d="M690,348 L910,470"/>
+  <text class="label-muted" x="700" y="376">read</text>
+
+  <!-- worker <-> queues -->
+  <path class="flow-both" d="M690,455 L925,366"/>
+  <text class="label" x="708" y="488">consume · publish</text>
+
+  <!-- worker -> Atlas -->
+  <path class="flow" d="M690,500 L910,500"/>
+  <text class="label" x="760" y="518">write history</text>
+
+  <!-- traces: Render -> Caddy -->
+  <path class="opt" d="M600,570 L600,670"/>
+  <text class="label-muted" x="612" y="598">OTLP traces + span logs (optional;</text>
+  <text class="label-muted" x="612" y="614">OTEL_* set in the Render dashboard)</text>
+
+  <!-- Caddy -> Jaeger -->
+  <path class="flow" d="M650,708 L910,708"/>
+  <text class="label" x="720" y="700">OTLP + UI proxy</text>
+
+  <!-- Developer -> Caddy -->
+  <path class="flow" d="M260,708 L350,708"/>
+  <text class="label-muted" x="268" y="700">jaeger.*</text>
+
+  <!-- ===== Legend ===== -->
+  <line x1="30" y1="787" x2="70" y2="787" stroke="#334155" stroke-width="1.6"/>
+  <text class="detail" x="78" y="791">request / data flow</text>
+  <line x1="220" y1="787" x2="260" y2="787" stroke="#64748b" stroke-width="1.4" stroke-dasharray="6 4"/>
+  <text class="detail" x="268" y="791">optional / operational</text>
+  <rect class="ext" x="430" y="779" width="16" height="16" rx="3"/>
+  <text class="detail" x="454" y="791">external service</text>
+  <rect class="infra" x="580" y="779" width="16" height="16" rx="3"/>
+  <text class="detail" x="604" y="791">observability infra</text>
+  <rect class="web" x="750" y="779" width="16" height="16" rx="3"/>
+  <text class="detail" x="774" y="791">static site</text>
+</svg>
