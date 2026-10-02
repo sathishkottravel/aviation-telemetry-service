@@ -336,6 +336,7 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | Method | Path | Purpose | Responses |
 | ------ | ---- | ------- | --------- |
 | `GET` | `/health` | Liveness, and whether RabbitMQ is connected | 200 |
+| `GET` | `/health/all` | api, producer (`PRODUCER_URL`) and worker (`WORKER_URL`) in one call: `{"status": "ok" \| "degraded", "services": {...}}`, each `ok`, `unreachable` or `not_configured` | 200 |
 | `POST` | `/api/telemetry` | Ingest one telemetry record; it is published to RabbitMQ, not written directly | 202, 422 invalid, 503 RabbitMQ down |
 | `DELETE` | `/api/telemetry?flight_id=&before=&older_than_hours=` | Prune telemetry; needs `X-Admin-Token` | 200 `{"deleted": n}`, 401, 403 disabled, 422, 503 |
 | `POST` / `GET` / WebSocket | `/graphql` | GraphQL (see above) and GraphiQL | 200 |
@@ -350,6 +351,8 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | `POST` | `/ingestion/live/start/{aircraft_id}?latitude=&longitude=&radius_nm=` | Start tracking (ICAO hex, callsign or `*`); area parameters move the polled area | 202, 409 already tracked, 422 invalid area, 503 RabbitMQ down |
 | `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
 | `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
+
+**CORS:** set `CORS_ORIGINS` (comma-separated origins, e.g. `https://sathishkottravel.github.io`) to let a browser frontend call the api, the producer and the worker's `/health`. Empty = no CORS headers. A Caddy proxy alternative is in [deploy/caddy/api.caddy](deploy/caddy/api.caddy).
 
 **telemetry-worker** only consumes the `telemetry.ingest` RabbitMQ queue. When `PORT` is set (Render web service), it
 also answers any `GET` on that port with `200 {"status": "ok", "rabbitmq": <connected>}`.

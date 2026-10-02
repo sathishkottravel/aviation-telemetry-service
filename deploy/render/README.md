@@ -60,6 +60,7 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
    | all three | `RABBITMQ_URL` | CloudAMQP `amqps://` URL |
    | api | `API_TOKEN`, `ADMIN_TOKEN` | same as the VM (the frontend already uses `API_TOKEN`) |
    | api | `PRODUCER_URL` | `https://aviation-producer.onrender.com` (the producer's URL shown by Render) |
+   | api | `WORKER_URL` | `https://aviation-worker.onrender.com` (for `GET /health/all`) |
    | api | `WAKE_URLS` | `https://aviation-producer.onrender.com/health,https://aviation-worker.onrender.com/health` |
    | producer | `ADSB_PRODUCER_AIRCRAFT` | empty, or e.g. `*` if Render (not the VM) should track |
    | all three | `OTEL_ENABLED` | `true` to trace; empty or `false` = off (then leave the next three empty) |
@@ -87,6 +88,11 @@ applied on push too. Manual redeploys and rollbacks are in each service's **Even
 token (without `Bearer`) and confirm; Swagger then sends it with every call. The value is in the Render dashboard →
 **Env Groups → aviation-shared → PRODUCER_TOKEN** (reveal). The same applies to curl, as shown in Check below.
 
+**CORS:** `CORS_ORIGINS` in the `aviation-shared` group (default `https://sathishkottravel.github.io`) lets the
+GitHub Pages frontend call all three services. The origin is scheme + host only; `/cesium3d-geovis` is a path and
+doesn't belong in it. To add one (e.g. a local dev server), extend the comma-separated value in `render.yaml`. The
+frontend can also make a single call to `GET /health/all` on the api instead of three.
+
 ## Changing settings
 
 - **Committed values** (`value:` in `render.yaml`: log level, `MONGODB_DB`, `TELEMETRY_TTL_DAYS`, ADS-B area and poll
@@ -102,6 +108,8 @@ API=https://aviation-api.onrender.com
 curl $API/health
 curl https://aviation-producer.onrender.com/health
 curl https://aviation-worker.onrender.com/health          # {"status":"ok","rabbitmq":true}
+curl $API/health/all                                       # {"status":"ok","services":{"api":…,"producer":…,"worker":…}}
+curl -i -H "Origin: https://sathishkottravel.github.io" $API/health   # access-control-allow-origin: https://sathishkottravel.github.io
 curl https://aviation-producer.onrender.com/ingestion/live/status/%2A   # 401 without the producer token
 curl -H "Authorization: Bearer $PRODUCER_TOKEN" https://aviation-producer.onrender.com/ingestion/live/aircraft
 E2E_API_URL=$API E2E_API_TOKEN=... uv run pytest -m e2e

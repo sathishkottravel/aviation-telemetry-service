@@ -8,6 +8,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from api_service.api.auth import ApiTokenMiddleware, AuthenticatedGraphQLRouter
 from api_service.api.controllers import router as rest_router
+from api_service.api.cors import add_cors
 from api_service.graphql.schema import schema
 from api_service.services import adsb_service, keep_warm, telemetry_service
 from telemetry_shared.config import get_settings
@@ -56,6 +57,7 @@ app = FastAPI(title="Aviation Telemetry API", lifespan=lifespan, telemetry={"aut
 app.include_router(rest_router)
 app.include_router(AuthenticatedGraphQLRouter(schema), prefix="/graphql")
 app.add_middleware(ApiTokenMiddleware)
+add_cors(app)  # after the token middleware, so it runs first
 if tracing_enabled:
     # Skip the per-message ASGI receive/send spans; the request span and our custom spans tell the story.
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])

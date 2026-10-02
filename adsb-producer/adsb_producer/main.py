@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from adsb_producer.api.controllers import router
+from adsb_producer.api.cors import add_cors
 from adsb_producer.services.tracking_service import AlreadyTrackingError, TrackingManager
 from telemetry_shared.adsb.client import AdsbLolClient
 from telemetry_shared.adsb.ingestion import AdsbAreaPoller
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
 # OTEL_EXPORTER_OTLP_ENDPOINT is set, duplicating ours; tracing is configured in telemetry_shared.observability.
 app = FastAPI(title="ADS-B Producer", lifespan=lifespan, telemetry={"auto_configure": False})
 app.include_router(router)
+add_cors(app)
 if tracing_enabled:
     # Skip the per-message ASGI receive/send spans; the request span and our custom spans tell the story.
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health", exclude_spans=["receive", "send"])

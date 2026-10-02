@@ -163,3 +163,15 @@ def test_docs_offer_bearer_auth_for_ingestion_routes_only(client):
     assert spec["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
     assert spec["paths"]["/ingestion/live/aircraft"]["get"]["security"] == [{"HTTPBearer": []}]
     assert "security" not in spec["paths"]["/health"]["get"]
+
+
+def test_cors_headers_for_allowed_origin(set_settings, rabbit, manager):
+    from adsb_producer.api.cors import add_cors
+
+    set_settings(cors_origins="https://sathishkottravel.github.io")
+    app = FastAPI()
+    app.include_router(router)
+    add_cors(app)
+    app.state.tracking, app.state.rabbitmq = manager, rabbit
+    response = TestClient(app).get("/health", headers={"Origin": "https://sathishkottravel.github.io"})
+    assert response.headers["access-control-allow-origin"] == "https://sathishkottravel.github.io"

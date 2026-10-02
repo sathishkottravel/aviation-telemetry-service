@@ -6,3 +6,59 @@
 api.sathishkottravel.com {
 	reverse_proxy aviation-api:8000
 }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Optional: health checks for the GitHub Pages frontend, proxied to Render through this Caddy (one origin).
+#
+# Alternative to calling the three Render services from the browser. Usually not needed: the services already send
+# CORS headers for CORS_ORIGINS (render.yaml), and GET /health/all on the api reports api, producer and worker in a
+# single call. Use this if you want the browser to talk to your own domain only.
+#   + one origin for the frontend; works even with CORS_ORIGINS empty on the services
+#   - an extra hop, and the checks depend on this droplet being up
+#
+# To enable: uncomment, point DNS for status.sathishkottravel.com at the droplet, then reload Caddy:
+#   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+# The frontend then calls https://status.sathishkottravel.com/api/health (or /api/health/all), /producer/health
+# and /worker/health. Replace the onrender.com names with the ones Render gave your services.
+#
+# status.sathishkottravel.com {
+# 	# Answer CORS preflights here; they never reach Render.
+# 	@preflight method OPTIONS
+# 	handle @preflight {
+# 		header Access-Control-Allow-Origin "https://sathishkottravel.github.io"
+# 		header Access-Control-Allow-Methods "GET, OPTIONS"
+# 		header Access-Control-Allow-Headers "Content-Type"
+# 		header Vary Origin
+# 		respond 204
+# 	}
+#
+# 	# ">" defers the header until after the upstream answered, replacing any CORS header the service sent itself
+# 	# (two Access-Control-Allow-Origin headers make the browser reject the response).
+# 	header >Access-Control-Allow-Origin "https://sathishkottravel.github.io"
+# 	header >Vary Origin
+#
+# 	# Only the health endpoints are exposed; everything else is 404. uri strip_prefix turns /api/health into /health.
+# 	# Render routes by Host header, so send the upstream's own host instead of status.sathishkottravel.com.
+# 	@api path /api/health /api/health/all
+# 	handle @api {
+# 		uri strip_prefix /api
+# 		reverse_proxy https://aviation-api.onrender.com {
+# 			header_up Host {upstream_hostport}
+# 		}
+# 	}
+# 	handle /producer/health {
+# 		uri strip_prefix /producer
+# 		reverse_proxy https://aviation-producer.onrender.com {
+# 			header_up Host {upstream_hostport}
+# 		}
+# 	}
+# 	handle /worker/health {
+# 		uri strip_prefix /worker
+# 		reverse_proxy https://aviation-worker.onrender.com {
+# 			header_up Host {upstream_hostport}
+# 		}
+# 	}
+# 	handle {
+# 		respond 404
+# 	}
+# }

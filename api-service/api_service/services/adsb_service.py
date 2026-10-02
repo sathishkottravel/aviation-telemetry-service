@@ -42,6 +42,15 @@ async def close() -> None:
         _http = None
 
 
+async def health() -> dict:
+    """The producer's /health body (open route, no token needed)."""
+    if _http is None:
+        raise RuntimeError("Producer client is not initialised; call connect() first")
+    response = await _http.get("/health")
+    response.raise_for_status()
+    return response.json()
+
+
 async def list_trackable_aircraft(
     latitude: float | None = None, longitude: float | None = None, radius_nm: float | None = None
 ) -> AreaAircraftList:

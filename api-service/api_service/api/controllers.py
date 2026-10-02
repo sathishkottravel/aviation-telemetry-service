@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pymongo.errors import PyMongoError
 
-from api_service.services import telemetry_service
+from api_service.services import health_service, telemetry_service
 from api_service.services.telemetry_service import IngestUnavailableError
 from telemetry_shared.config import get_settings
 from telemetry_shared.models import Telemetry
@@ -24,6 +24,12 @@ def require_admin_token(x_admin_token: Annotated[str | None, Header()] = None) -
 @router.get("/health")
 async def health(request: Request) -> dict[str, str | bool]:
     return {"status": "ok", "rabbitmq": request.app.state.rabbitmq.is_connected}
+
+
+@router.get("/health/all")
+async def health_all(request: Request) -> dict:
+    """api, producer and worker in one call (status is "ok" or "degraded"; always HTTP 200)."""
+    return await health_service.check_all(request.app.state.rabbitmq.is_connected)
 
 
 @router.post("/api/telemetry", status_code=status.HTTP_202_ACCEPTED)

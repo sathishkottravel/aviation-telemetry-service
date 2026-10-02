@@ -30,6 +30,10 @@ envVarGroups:
       # Tells Render traces apart from VM traces in the same backend (no effect while tracing is off).
       - key: OTEL_RESOURCE_ATTRIBUTES
         value: deployment.environment=render
+      # Browser origins allowed to call the services (CORS): scheme + host, comma-separated, no path.
+      # Add one by editing this value and pushing (dashboard edits are reverted on Blueprint sync).
+      - key: CORS_ORIGINS
+        value: https://sathishkottravel.github.io
       # The api sends it, the producer requires it (the producer is public on Render).
       - key: PRODUCER_TOKEN
         generateValue: true
@@ -61,6 +65,9 @@ services:
         sync: false
       # https://<producer>.onrender.com/health,https://<worker>.onrender.com/health
       - key: WAKE_URLS
+        sync: false
+      # https://<worker>.onrender.com (for GET /health/all)
+      - key: WORKER_URL
         sync: false
       - key: OTEL_ENABLED
         sync: false

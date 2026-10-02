@@ -34,7 +34,9 @@ async def main() -> None:
     rabbitmq = RabbitMQ(settings)
     # Hosts such as Render run the worker as a web service and expect it to listen on $PORT soon after start.
     port = os.environ.get("PORT")
-    health = await start_health_server(int(port), lambda: rabbitmq.is_connected) if port else None
+    health = (
+        await start_health_server(int(port), lambda: rabbitmq.is_connected, settings.cors_origin_list) if port else None
+    )
 
     mongo.connect()
     try:
