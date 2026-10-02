@@ -38,6 +38,11 @@ class Settings(BaseSettings):
 
     producer_url: str = "http://localhost:8001"
     """Where the API reaches the ADS-B producer (for listing trackable aircraft)."""
+    worker_url: str = ""
+    """Where the API reaches the worker's /health for GET /health/all (Render). Empty = reported as not configured."""
+    cors_origins: str = ""
+    """Comma-separated browser origins allowed to call the services (CORS), e.g. https://sathishkottravel.github.io.
+    An origin is scheme + host (+ port), never a path. Empty disables CORS headers."""
     producer_token: str = ""
     """Bearer token the producer requires on its /ingestion routes (the API sends it). Empty disables the check;
     set it wherever the producer is publicly reachable (Render)."""
@@ -63,6 +68,10 @@ class Settings(BaseSettings):
     @property
     def wake_url_list(self) -> list[str]:
         return [u.strip() for u in self.wake_urls.split(",") if u.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache
