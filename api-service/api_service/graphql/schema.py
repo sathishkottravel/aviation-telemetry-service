@@ -5,6 +5,7 @@ import strawberry
 from strawberry.extensions.tracing import OpenTelemetryExtension
 from graphql import GraphQLError
 
+from api_service.api.auth import HasApiToken
 from api_service.graphql.types import Airport, Flight, Telemetry, TrackableArea, TrackingStatus, Waypoint
 from api_service.services import adsb_service, navigation_service, telemetry_service
 from api_service.services.adsb_service import (
@@ -79,7 +80,7 @@ class Query:
 
 @strawberry.type
 class Mutation:
-    @strawberry.mutation(description=(
+    @strawberry.mutation(permission_classes=[HasApiToken], description=(
         "Start live ADS-B tracking for an aircraft (ICAO hex or callsign), or '*' for every aircraft in the area. "
         "With any of latitude/longitude/radiusNm (max 250 NM), the producer moves its single polled area there "
         "(for every tracked aircraft); missing values come from the producer's defaults."
@@ -98,7 +99,7 @@ class Mutation:
         except (AlreadyTrackingError, InvalidArgumentError, ProducerUnavailableError) as exc:
             raise _producer_error(exc) from exc
 
-    @strawberry.mutation(description="Stop live ADS-B tracking for an aircraft, or '*' to stop area-wide tracking.")
+    @strawberry.mutation(permission_classes=[HasApiToken], description="Stop live ADS-B tracking for an aircraft, or '*' to stop area-wide tracking.")
     async def stop_tracking(self, aircraft_id: strawberry.ID) -> TrackingStatus:
         try:
             return TrackingStatus.from_model(await adsb_service.stop_tracking(aircraft_id))

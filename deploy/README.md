@@ -31,7 +31,7 @@ Public API surface (`https://api.sathishkottravel.com`):
 
 | Path | Auth |
 | ---- | ---- |
-| `/graphql` (POST, GET operations) and GraphQL subscriptions (WebSocket) | `API_TOKEN`: `Authorization: Bearer <token>`; subscriptions send `{"authorization": "Bearer <token>"}` in `connection_init` |
+| `/graphql` (POST, GET operations) and GraphQL subscriptions (WebSocket) | `API_TOKEN`: `Authorization: Bearer <token>`; subscriptions send `{"authorization": "Bearer <token>"}` in `connection_init`. With `PUBLIC_READ=true` only the mutations need it |
 | `POST /api/telemetry` | `API_TOKEN` |
 | `DELETE /api/telemetry` | `X-Admin-Token: <ADMIN_TOKEN>` |
 | `/health`, `/docs`, `/openapi.json`, the GraphiQL page (`GET /graphql` in a browser) | none |

@@ -305,6 +305,18 @@ default compose setup, tests).
 
 Missing or wrong tokens get `401` with `WWW-Authenticate: Bearer`.
 
+**Public frontends** (a static site or a released desktop app) can't keep a token secret: anything shipped to the
+browser is readable. Two settings let such a frontend work without embedding one:
+
+| Setting | Effect |
+| ------- | ------ |
+| `PUBLIC_READ=true` | GraphQL queries and subscriptions need no token. `startTracking`/`stopTracking` still do: without it they return the error `API token required to start or stop tracking` with `extensions.code` `UNAUTHENTICATED`. `POST /api/telemetry` is unchanged. |
+| `CORS_ORIGINS` | Comma-separated browser origins allowed to call the API, e.g. `https://sathishkottravel.github.io,http://localhost:5173`. Add `null` for pages loaded from `file://` (a packaged Electron app). Browser preflights are answered before the token check. Empty = no CORS headers (default). |
+
+Users who start and stop tracking paste their own token into the frontend at runtime. With `PUBLIC_READ` on, anyone
+can run `trackableAircraft`, and each query for an area other than the polled one reaches ADSB.lol, which rate-limits.
+Put a rate limit in front of the API (e.g. in Caddy) if that becomes a problem.
+
 ```sh
 curl -X POST https://api.sathishkottravel.com/graphql \
   -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \

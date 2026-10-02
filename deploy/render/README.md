@@ -61,6 +61,7 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
    | api | `API_TOKEN`, `ADMIN_TOKEN` | same as the VM (the frontend already uses `API_TOKEN`) |
    | api | `PRODUCER_URL` | `https://aviation-producer.onrender.com` (the producer's URL shown by Render) |
    | api | `WAKE_URLS` | `https://aviation-producer.onrender.com/health,https://aviation-worker.onrender.com/health` |
+   | api | `PUBLIC_READ`, `CORS_ORIGINS` | for a public frontend: `true` and `https://sathishkottravel.github.io,null`; empty keeps the API token-only |
    | producer | `ADSB_PRODUCER_AIRCRAFT` | empty, or e.g. `*` if Render (not the VM) should track |
    | all three | `OTEL_ENABLED` | `true` to trace; empty or `false` = off (then leave the next three empty) |
    | all three | `OTEL_EXPORTER_OTLP_ENDPOINT` | the VM's OTLP route `https://otel.sathishkottravel.com`, or Grafana Cloud `https://otlp-gateway-prod-<region>.grafana.net/otlp` |

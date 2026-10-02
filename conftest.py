@@ -18,6 +18,8 @@ os.environ.update(
         "PRODUCER_URL": "http://producer.test",
         "PRODUCER_TOKEN": "",
         "WAKE_URLS": "",
+        "PUBLIC_READ": "",
+        "CORS_ORIGINS": "",
     }
 )
 

@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     admin_token: str = ""
     """Required in the X-Admin-Token header for admin endpoints (telemetry pruning). Empty disables them."""
 
+    public_read: bool = False
+    """With API_TOKEN set: GraphQL queries and subscriptions need no token, mutations (start/stopTracking) still do.
+    For a public frontend that can't hold a secret (GitHub Pages, a released desktop app)."""
+
+    cors_origins: str = ""
+    """Comma-separated browser origins allowed to call the API cross-origin, e.g.
+    https://sathishkottravel.github.io,http://localhost:5173 ("null" = file:// pages such as a packaged Electron
+    app). Empty disables CORS."""
+
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     rabbitmq_ingest_exchange: str = "telemetry.ingest"
     rabbitmq_ingest_queue: str = "telemetry.ingest"
@@ -63,6 +72,10 @@ class Settings(BaseSettings):
     @property
     def wake_url_list(self) -> list[str]:
         return [u.strip() for u in self.wake_urls.split(",") if u.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 @lru_cache

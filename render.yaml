@@ -56,6 +56,12 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         sync: false
+      # true: queries and subscriptions open, mutations still need API_TOKEN (public frontend)
+      - key: PUBLIC_READ
+        sync: false
+      # https://sathishkottravel.github.io,null
+      - key: CORS_ORIGINS
+        sync: false
       # https://<producer>.onrender.com
       - key: PRODUCER_URL
         sync: false

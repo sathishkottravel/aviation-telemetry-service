@@ -6,9 +6,10 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from api_service.api import controllers
-from api_service.api.auth import ApiTokenMiddleware, AuthenticatedGraphQLRouter
+from api_service.api.auth import ApiTokenMiddleware, AuthenticatedGraphQLRouter, add_cors
 from api_service.graphql.schema import schema
-from api_service.services import telemetry_service
+from api_service.services import adsb_service, telemetry_service
+from telemetry_shared.models import TrackingStatus
 
 TOKEN = "t0p-secret"
 TELEMETRY = {"flight_id": "SAS123", "timestamp": "2026-09-29T10:00:00Z", "latitude": 59.35, "longitude": 17.94,
@@ -107,3 +108,88 @@ class TestSubscriptions:
 
 def test_subscriptions_open_when_no_token_configured(client):
     assert connect(client, None)["type"] == "connection_ack"
+
+
+START = {"query": 'mutation { startTracking(aircraftId: "sas709") { running } }'}
+PAGES = "https://sathishkottravel.github.io"
+
+
+@pytest.fixture
+def stub_tracking(monkeypatch):
+    async def fake_start(*args, **kwargs):
+        return TrackingStatus(aircraft_id="sas709", icao_hex="4ab563", running=True)
+
+    monkeypatch.setattr(adsb_service, "start_tracking", fake_start)
+
+
+@pytest.fixture
+def public_read(set_settings):
+    set_settings(api_token=TOKEN, public_read=True)
+
+
+@pytest.mark.usefixtures("public_read", "stub_tracking")
+class TestPublicRead:
+    def test_queries_need_no_token(self, client):
+        assert client.post("/graphql", json=QUERY).json() == {"data": {"__typename": "Query"}}
+        assert client.get("/graphql", params=QUERY).status_code == 200
+
+    def test_mutations_still_need_the_token(self, client):
+        body = client.post("/graphql", json=START).json()
+        assert body["data"] is None
+        assert body["errors"][0]["message"] == "API token required to start or stop tracking"
+        assert body["errors"][0]["extensions"] == {"code": "UNAUTHENTICATED"}
+        wrong = client.post("/graphql", json=START, headers=bearer("wrong")).json()
+        assert wrong["errors"][0]["extensions"] == {"code": "UNAUTHENTICATED"}
+
+    def test_mutations_accept_the_token(self, client):
+        response = client.post("/graphql", json=START, headers=bearer(TOKEN))
+        assert response.json() == {"data": {"startTracking": {"running": True}}}
+
+    def test_subscriptions_need_no_token(self, client):
+        assert connect(client, None)["type"] == "connection_ack"
+
+    def test_ingest_still_needs_the_token(self, client):
+        assert client.post("/api/telemetry", json=TELEMETRY).status_code == 401
+
+
+@pytest.mark.usefixtures("token_required", "stub_tracking")
+def test_mutation_permission_is_redundant_but_harmless_without_public_read(client):
+    assert client.post("/graphql", json=START).status_code == 401
+    response = client.post("/graphql", json=START, headers=bearer(TOKEN))
+    assert response.json() == {"data": {"startTracking": {"running": True}}}
+
+
+@pytest.fixture
+def cors_client(client):
+    add_cors(client.app, [PAGES, "null"])
+    return client
+
+
+def preflight(client, origin):
+    return client.options("/graphql", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type",
+    })
+
+
+@pytest.mark.usefixtures("token_required")
+class TestCors:
+    @pytest.mark.parametrize("origin", [PAGES, "null"])
+    def test_preflight_from_allowed_origin_skips_the_token_check(self, cors_client, origin):
+        response = preflight(cors_client, origin)
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+        assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+    def test_other_origins_get_no_cors_headers(self, cors_client):
+        response = preflight(cors_client, "https://evil.example")
+        assert "access-control-allow-origin" not in response.headers
+
+    def test_401_is_readable_by_the_allowed_origin(self, cors_client):
+        response = cors_client.post("/graphql", json=QUERY, headers={"Origin": PAGES})
+        assert response.status_code == 401
+        assert response.headers["access-control-allow-origin"] == PAGES
+
+    def test_off_by_default(self, client):
+        assert preflight(client, PAGES).status_code == 401
