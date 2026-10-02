@@ -30,9 +30,9 @@
   <text x="30" y="36" font-size="20" font-weight="700" fill="#0f172a">Aviation Telemetry Service: system overview</text>
 
   <!-- ===== GitHub Pages ===== -->
-  <rect class="group" x="30" y="230" width="230" height="150" rx="10"/>
+  <rect class="group" x="30" y="230" width="200" height="150" rx="10"/>
   <text class="group-title" x="45" y="255">GitHub Pages</text>
-  <rect class="web" x="45" y="270" width="200" height="90" rx="8"/>
+  <rect class="web" x="45" y="270" width="170" height="90" rx="8"/>
   <text class="name" x="60" y="298">Frontend</text>
   <text class="detail" x="60" y="318">Map UI, Apollo Client</text>
   <text class="detail" x="60" y="336">live + playback</text>
@@ -51,7 +51,7 @@
   <text class="name" x="365" y="283">api-service</text>
   <text class="detail" x="365" y="303">FastAPI + Strawberry GraphQL</text>
   <text class="detail" x="365" y="321">queries · history · liveTelemetry subscription</text>
-  <text class="detail" x="365" y="339">in-memory live fan-out · POST /api/telemetry</text>
+  <text class="detail" x="365" y="339">live fan-out · /health/all (checks all three)</text>
 
   <rect class="box" x="350" y="440" width="340" height="80" rx="8"/>
   <text class="name" x="365" y="468">telemetry-worker</text>
@@ -104,10 +104,11 @@
 
   <!-- ===== Flows ===== -->
   <!-- Frontend <-> api -->
-  <path class="flow-both" d="M245,315 L350,315"/>
-  <text class="label" x="262" y="303">GraphQL</text>
-  <text class="label-muted" x="262" y="335">HTTPS / WSS</text>
-  <text class="label-muted" x="262" y="351">+ API_TOKEN</text>
+  <path class="flow-both" d="M215,315 L350,315"/>
+  <text class="label" x="238" y="303">GraphQL</text>
+  <text class="label-muted" x="238" y="335">HTTPS/WSS</text>
+  <text class="label-muted" x="238" y="351">API_TOKEN</text>
+  <text class="label-muted" x="238" y="367">CORS ok</text>
 
   <!-- api -> producer -->
   <path class="flow" d="M520,255 L520,180"/>
@@ -116,8 +117,8 @@
 
   <!-- api -> producer/worker keep-warm -->
   <path class="opt" d="M520,355 L520,440"/>
-  <text class="label-muted" x="530" y="393">keep-warm /health pings</text>
-  <text class="label-muted" x="530" y="409">(producer + worker)</text>
+  <text class="label-muted" x="530" y="393">/health pings (producer +</text>
+  <text class="label-muted" x="530" y="409">worker): keep-warm, /health/all</text>
 
   <!-- producer -> ADSB.lol -->
   <path class="flow" d="M690,140 L910,140"/>

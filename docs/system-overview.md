@@ -7,6 +7,7 @@ A flight-tracking demo: live aircraft positions on a map, plus stored history fo
 
 ## Frontend
 A map UI on GitHub Pages, using Apollo Client over GraphQL (HTTPS for queries, WebSocket for live updates).
+Its origin (`https://sathishkottravel.github.io`) is allowed by CORS (`CORS_ORIGINS`) on all three services.
 
 ## Services
 - **api-service:** FastAPI + GraphQL. Serves flights, routes, history and the `liveTelemetry` subscription.
@@ -31,6 +32,9 @@ A DigitalOcean droplet runs Caddy and Jaeger; ADSB.lol, CloudAMQP and MongoDB At
 ## Security
 `API_TOKEN` protects GraphQL and ingest, `PRODUCER_TOKEN` protects the producer, and `ADMIN_TOKEN` protects deletes.
 All secrets live in the Render dashboard, never in the repository.
+
+## Health
+Each service answers `GET /health`; `GET /health/all` on the api checks all three in one call (ok / degraded).
 
 ## Observability
 Optional OpenTelemetry traces, including log lines, go through Caddy to Jaeger on the droplet (kept for 24 hours).

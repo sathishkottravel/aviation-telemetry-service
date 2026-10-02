@@ -352,7 +352,7 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
 | `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
 
-**CORS:** set `CORS_ORIGINS` (comma-separated origins, e.g. `https://sathishkottravel.github.io`) to let a browser frontend call the api, the producer and the worker's `/health`. Empty = no CORS headers. A Caddy proxy alternative is in [deploy/caddy/api.caddy](deploy/caddy/api.caddy).
+**CORS:** set `CORS_ORIGINS` (comma-separated origins, e.g. `https://sathishkottravel.github.io`) to let a browser frontend call the api, the producer and the worker's `/health`. Empty = no CORS headers. `GET /health/all` on the api checks all three services in one call.
 
 **telemetry-worker** only consumes the `telemetry.ingest` RabbitMQ queue. When `PORT` is set (Render web service), it
 also answers any `GET` on that port with `200 {"status": "ok", "rabbitmq": <connected>}`.
