@@ -49,3 +49,16 @@ async def test_rate_limit_pauses_requests_then_resumes(monkeypatch):
 def test_user_agent_is_sent():
     client = AdsbLolClient("https://adsb.test", timeout_s=5, user_agent="aviation-test/1.0 (+https://x.test)")
     assert client._http.headers["User-Agent"] == "aviation-test/1.0 (+https://x.test)"
+
+
+async def test_rate_limit_honours_retry_after_and_logs_why(caplog):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "42"}, text="slow down")
+
+    client = AdsbLolClient("https://adsb.test", timeout_s=5, user_agent="tests/1.0 (+https://example.test)")
+    client._http = httpx.AsyncClient(base_url="https://adsb.test", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(AdsbRateLimitedError) as exc_info:
+        await client.fetch_area(1, 2, 3)
+    assert exc_info.value.retry_after_s == 42
+    assert "Retry-After=42" in caplog.text and "slow down" in caplog.text

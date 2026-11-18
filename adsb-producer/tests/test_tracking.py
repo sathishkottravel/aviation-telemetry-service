@@ -13,7 +13,7 @@ from adsb_producer.services.tracking_service import (
     NotTrackingError,
     TrackingManager,
 )
-from telemetry_shared.adsb.client import AdsbSnapshot
+from telemetry_shared.adsb.client import AdsbRateLimitedError, AdsbSnapshot
 from telemetry_shared.adsb.ingestion import AdsbAreaPoller, Area
 from telemetry_shared.config import get_settings
 
@@ -31,6 +31,11 @@ class FakeClient:
     async def fetch_area(self, *args):
         self.areas.append(args)
         return AdsbSnapshot(NOW, AREA)
+
+
+class RateLimitedClient:
+    async def fetch_area(self, *args):
+        raise AdsbRateLimitedError(42)
 
 
 class FakeRabbit:
@@ -123,6 +128,13 @@ def test_rest_area_listing(client):
     body = client.get("/ingestion/live/aircraft").json()
     assert body["radius_nm"] == get_settings().adsb_radius_nm
     assert [a["icao_hex"] for a in body["aircraft"]] == ["4ab567", "4ab563"]
+
+
+def test_rate_limited_listing_without_snapshot_sends_retry_after(client, manager):
+    manager._poller._client = RateLimitedClient()
+    response = client.get("/ingestion/live/aircraft")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "42"
 
 
 def test_producer_token_guards_ingestion_routes_but_not_health(client, set_settings):

@@ -10,6 +10,7 @@ from adsb_producer.services.tracking_service import (
     NotTrackingError,
     TrackingManager,
 )
+from telemetry_shared.adsb.client import AdsbRateLimitedError
 from telemetry_shared.adsb.ingestion import Area
 from telemetry_shared.config import get_settings
 from telemetry_shared.models import AreaAircraftList, TrackingStatus
@@ -75,7 +76,8 @@ async def list_area_aircraft(request: Request, area: Area | None = Depends(area_
     except Exception as exc:
         # The polled area falls back to its last snapshot, so this means no snapshot yet, or another area failed.
         logger.warning("Cannot list area aircraft: %s", exc)
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"ADSB.lol unavailable: {exc}") from exc
+        headers = {"Retry-After": f"{exc.retry_after_s:.0f}"} if isinstance(exc, AdsbRateLimitedError) else None
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"ADSB.lol unavailable: {exc}", headers) from exc
 
 
 @ingestion.post("/start/{aircraft_id}", status_code=status.HTTP_202_ACCEPTED)

@@ -125,14 +125,32 @@ class TestAreaPoller:
 
     async def test_latest_snapshot_reuses_recent_fetch_and_falls_back_when_rate_limited(self, set_settings):
         set_settings(adsb_poll_interval=0)  # every call counts as stale
-        client = FakeClient([snapshot(NOW, aircraft()), AdsbRateLimitedError("limited")])
+        client = FakeClient([snapshot(NOW, aircraft()), AdsbRateLimitedError(30)])
         poller = AdsbAreaPoller(client, FakeRabbit(), get_settings())
         first = await poller.latest_snapshot()
         assert await poller.latest_snapshot() is first  # rate limited -> previous snapshot
         assert client.fetches == 2
 
+    async def test_other_areas_are_cached_and_fall_back_when_rate_limited(self):
+        other = Area(57.7, 11.9, 50)
+        client = FakeClient([snapshot(NOW, aircraft()), AdsbRateLimitedError(30)])
+        poller = AdsbAreaPoller(client, FakeRabbit(), get_settings())
+        first = await poller.latest_snapshot(other)
+        assert await poller.latest_snapshot(other) is first and client.fetches == 1  # fresh -> reused
+        poller._area_cache[other] = (0.0, first)  # make it stale
+        assert await poller.latest_snapshot(other) is first and client.fetches == 2  # rate limited -> cached
+        assert poller.area != other  # listing never moves the polled area
+
+    async def test_set_area_reuses_a_cached_listing(self):
+        other = Area(57.7, 11.9, 50)
+        client = FakeClient([snapshot(NOW, aircraft())])
+        poller = AdsbAreaPoller(client, FakeRabbit(), get_settings())
+        listed = await poller.latest_snapshot(other)
+        poller.set_area(other)
+        assert await poller.latest_snapshot() is listed and client.fetches == 1
+
     async def test_latest_snapshot_raises_without_any_snapshot(self):
-        poller = AdsbAreaPoller(FakeClient([AdsbRateLimitedError("limited")]), FakeRabbit(), get_settings())
+        poller = AdsbAreaPoller(FakeClient([AdsbRateLimitedError(30)]), FakeRabbit(), get_settings())
         with pytest.raises(AdsbRateLimitedError):
             await poller.latest_snapshot()
 

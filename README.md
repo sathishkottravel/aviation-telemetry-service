@@ -347,7 +347,7 @@ A token shipped in a public browser app is visible to its users; it keeps out ca
 | Method | Path | Purpose | Responses |
 | ------ | ---- | ------- | --------- |
 | `GET` | `/health` | Liveness, and whether RabbitMQ is connected | 200 |
-| `GET` | `/ingestion/live/aircraft?latitude=&longitude=&radius_nm=` | Aircraft in an area, nearest first, with a `tracked` flag; no parameters = the polled area | 200, 422 invalid area, 503 no snapshot yet |
+| `GET` | `/ingestion/live/aircraft?latitude=&longitude=&radius_nm=` | Aircraft in an area, nearest first, with a `tracked` flag; no parameters = the polled area | 200, 422 invalid area, 503 no snapshot of that area yet (with `Retry-After` when rate limited) |
 | `POST` | `/ingestion/live/start/{aircraft_id}?latitude=&longitude=&radius_nm=` | Start tracking (ICAO hex, callsign or `*`); area parameters move the polled area | 202, 409 already tracked, 422 invalid area, 503 RabbitMQ down |
 | `POST` | `/ingestion/live/stop/{aircraft_id}` | Stop tracking | 200, 404 not tracked |
 | `GET` | `/ingestion/live/status/{aircraft_id}` | Tracking state | 200 (`running: false` when unknown) |
@@ -546,7 +546,7 @@ Aircraft listed in `ADSB_PRODUCER_AIRCRAFT` (comma-separated) are tracked from s
 | `PRODUCER_URL` | `http://localhost:8001` | Where the API reaches the producer (`trackableAircraft`, tracking mutations) |
 
 - **One request per interval.** A single area poller fetches the area once per interval and picks out every requested aircraft locally, however many are tracked. Start and stop only change the set of requested IDs. Nothing is requested while the set is empty.
-- **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s.
+- **Rate limits.** ADSB.lol rate-limits roughly this often and answers 429. The producer then pauses requests for all trackers (10 s, doubling up to 120 s) and resumes on its own. Raising `ADSB_POLL_INTERVAL` to 10 or more avoids most 429s. Area listings are cached per area for about one poll interval (up to 32 areas) and fall back to the last snapshot of that area while rate limited, so only an area never fetched before returns 503. On Render the free tier shares outbound IPs with other services, so 429s can arrive even when this producer sends few requests; the warning log shows ADSB.lol's `Retry-After` and response body.
 
 ## Tracing (OpenTelemetry + Jaeger)
 

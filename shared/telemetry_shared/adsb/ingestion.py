@@ -21,6 +21,9 @@ ALL_AIRCRAFT = "*"
 """Wildcard aircraft ID: every aircraft in the configured area."""
 # How long to remember an aircraft's last published position for de-duplication after it drops out of view.
 DEDUP_RETENTION = timedelta(minutes=10)
+# Snapshots of areas other than the polled one, kept so repeated listings (map panning, several clients)
+# don't each cost an ADSB.lol request, and so a rate-limited listing can fall back to the last result.
+MAX_CACHED_AREAS = 32
 
 
 def _callsign(raw: dict[str, Any]) -> str | None:
@@ -137,39 +140,50 @@ class AdsbAreaPoller:
         self._snapshot: AdsbSnapshot | None = None
         self._fetched_at = 0.0
         self._published_last_poll = 0
+        self._area_cache: dict[Area, tuple[float, AdsbSnapshot]] = {}
 
     def set_area(self, area: Area) -> None:
         """Poll a different area from the next tick on."""
         if area != self.area:
-            self.area, self._snapshot = area, None
+            # A listing of the new area may already be cached; it counts as the polled area's snapshot.
+            self.area = area
+            self._fetched_at, self._snapshot = self._area_cache.get(area, (0.0, None))
 
     async def _fetch(self, area: Area | None = None) -> AdsbSnapshot:
         area = area or self.area
         async with self._lock:
             snapshot = await self._client.fetch_area(area.latitude, area.longitude, area.radius_nm)
-            # Keep it only if it is still the polled area (set_area may have run during the request).
+            fetched_at = time.monotonic()
+            # Keep it as the polled snapshot only if it is still the polled area (set_area may have run meanwhile).
             if area == self.area:
-                self._snapshot, self._fetched_at = snapshot, time.monotonic()
+                self._snapshot, self._fetched_at = snapshot, fetched_at
+            self._area_cache.pop(area, None)
+            self._area_cache[area] = (fetched_at, snapshot)
+            while len(self._area_cache) > MAX_CACHED_AREAS:
+                del self._area_cache[next(iter(self._area_cache))]  # oldest fetch first
             return snapshot
 
     async def latest_snapshot(self, area: Area | None = None) -> AdsbSnapshot:
         """A snapshot of the given area (default: the polled one).
 
-        For the polled area, a recent poll is reused, and if a fetch fails (rate limited, upstream down) an
-        older snapshot is returned when there is one. Any other area is fetched directly.
+        A recent snapshot of the area is reused (the poller's, or an earlier listing's), and if a fetch fails
+        (rate limited, upstream down) an older snapshot of that area is returned when there is one.
         """
-        if area is not None and area != self.area:
-            return await self._fetch(area)
+        area = area or self.area
+        if area == self.area:
+            cached = (self._fetched_at, self._snapshot) if self._snapshot is not None else None
+        else:
+            cached = self._area_cache.get(area)
         # 1.5x: a poll cycle takes the interval plus request time, so a running poller always counts as fresh.
         max_age_s = self._settings.adsb_poll_interval * 1.5
-        if self._snapshot is not None and time.monotonic() - self._fetched_at < max_age_s:
-            return self._snapshot
+        if cached is not None and time.monotonic() - cached[0] < max_age_s:
+            return cached[1]
         try:
-            return await self._fetch()
+            return await self._fetch(area)
         except Exception:
-            if self._snapshot is None:
+            if cached is None:
                 raise
-            return self._snapshot
+            return cached[1]
 
     async def poll_once(self, aircraft_ids: set[str]) -> dict[str, PollResult]:
         snapshot = await self._fetch()
