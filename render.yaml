@@ -60,13 +60,14 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         sync: false
-      # https://<producer>.onrender.com
+      # https://aviation-producer-<suffix>.onrender.com (copy from the producer's page in the dashboard)
       - key: PRODUCER_URL
         sync: false
-      # https://<producer>.onrender.com/health,https://<worker>.onrender.com/health
+      # https://aviation-producer-<suffix>.onrender.com/health,https://aviation-worker-<suffix>.onrender.com/health
       - key: WAKE_URLS
         sync: false
-      # https://<worker>.onrender.com (for GET /health/all)
+      # https://aviation-worker-<suffix>.onrender.com (for GET /health/all; added after the Blueprint was
+      # created, so set it by hand on existing services)
       - key: WORKER_URL
         sync: false
       - key: OTEL_ENABLED

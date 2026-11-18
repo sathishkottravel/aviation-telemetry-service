@@ -9,7 +9,12 @@ Blueprint that builds the existing Dockerfiles (repo root as context) as three *
 | `aviation-producer` | `adsb-producer/Dockerfile` | public, so `/ingestion/live/*` needs `PRODUCER_TOKEN` |
 | `aviation-worker` | `telemetry-worker/Dockerfile` | answers `/health` on `$PORT` so Render can run it as a web service |
 
-MongoDB Atlas and CloudAMQP are the **same** as the VM's. Nothing under `deploy/` or the GHCR workflow changes.
+MongoDB Atlas (cluster) and CloudAMQP are the **same** as the VM's; Render uses its own database, `aviation-prod`.
+Nothing under `deploy/` or the GHCR workflow changes.
+
+**Service URLs:** Render adds a random suffix to each service name, e.g. `https://aviation-api-5f6p.onrender.com`.
+This guide writes them as `https://aviation-api-<suffix>.onrender.com` (and `-producer-`, `-worker-`); copy the real
+URL from the top of each service's page in the Render dashboard. Each service has its own suffix.
 
 ## Free-tier behaviour
 
@@ -59,9 +64,9 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
    | api, worker | `MONGODB_URI` | Atlas connection string |
    | all three | `RABBITMQ_URL` | CloudAMQP `amqps://` URL |
    | api | `API_TOKEN`, `ADMIN_TOKEN` | same as the VM (the frontend already uses `API_TOKEN`) |
-   | api | `PRODUCER_URL` | `https://aviation-producer.onrender.com` (the producer's URL shown by Render) |
-   | api | `WORKER_URL` | `https://aviation-worker.onrender.com` (for `GET /health/all`) |
-   | api | `WAKE_URLS` | `https://aviation-producer.onrender.com/health,https://aviation-worker.onrender.com/health` |
+   | api | `PRODUCER_URL` | `https://aviation-producer-<suffix>.onrender.com` |
+   | api | `WORKER_URL` | `https://aviation-worker-<suffix>.onrender.com` (for `GET /health/all`; optional) |
+   | api | `WAKE_URLS` | `https://aviation-producer-<suffix>.onrender.com/health,https://aviation-worker-<suffix>.onrender.com/health` |
    | producer | `ADSB_PRODUCER_AIRCRAFT` | empty, or e.g. `*` if Render (not the VM) should track |
    | all three | `OTEL_ENABLED` | `true` to trace; empty or `false` = off (then leave the next three empty) |
    | all three | `OTEL_EXPORTER_OTLP_ENDPOINT` | the VM's OTLP route `https://otel.sathishkottravel.com`, or Grafana Cloud `https://otlp-gateway-prod-<region>.grafana.net/otlp` |
@@ -72,11 +77,16 @@ and they stay there. To rotate one, edit it under the service's **Environment** 
    services keep working either way.
 
    `PRODUCER_TOKEN` is generated once in the `aviation-shared` environment group and used by api and producer.
-   If Render gives a service a different `onrender.com` name, update `PRODUCER_URL`/`WAKE_URLS` to match.
+   The URLs only exist once the services are created: if you don't know them yet, leave `PRODUCER_URL`,
+   `WORKER_URL` and `WAKE_URLS` empty and set them on `aviation-api` → **Environment** after the first deploy.
+
+   Render asks for `sync: false` values only when the Blueprint is first created. A `sync: false` key added to
+   `render.yaml` later (as `WORKER_URL` was) does not appear on existing services: add it by hand under the
+   service's **Environment** tab.
 4. Apply. The first build takes a few minutes per service. Then seed Render's database once from your machine:
    `MONGODB_URI=<Atlas URI> MONGODB_DB=aviation-prod uv run seed-db`.
-5. Point the frontend (or a second frontend build) at `https://aviation-api.onrender.com/graphql` and
-   `wss://aviation-api.onrender.com/graphql` for subscriptions.
+5. Point the frontend (or a second frontend build) at `https://aviation-api-<suffix>.onrender.com/graphql` and
+   `wss://aviation-api-<suffix>.onrender.com/graphql` for subscriptions.
 
 Deploys: `autoDeployTrigger: commit` redeploys a service as soon as you push to `main`, without waiting for the
 GitHub `deploy` workflow, and only when its folder, `shared/`, `pyproject.toml` or `uv.lock` changed. A failing test
@@ -84,7 +94,7 @@ does not stop the deploy; a build that fails or an image whose `/health` check f
 running. Turn on the Blueprint's **Auto Sync** (Blueprints → this Blueprint → Settings) so `render.yaml` changes are
 applied on push too. Manual redeploys and rollbacks are in each service's **Events** tab.
 
-**Producer `/docs`:** the `/ingestion/live/*` routes need `PRODUCER_TOKEN`. Click **Authorize**, paste the raw
+**Producer `/docs`** (`https://aviation-producer-<suffix>.onrender.com/docs`): the `/ingestion/live/*` routes need `PRODUCER_TOKEN`. Click **Authorize**, paste the raw
 token (without `Bearer`) and confirm; Swagger then sends it with every call. The value is in the Render dashboard →
 **Env Groups → aviation-shared → PRODUCER_TOKEN** (reveal). The same applies to curl, as shown in Check below.
 
@@ -104,13 +114,17 @@ frontend can also make a single call to `GET /health/all` on the api instead of 
 ## Check
 
 ```sh
-API=https://aviation-api.onrender.com
+# Your service URLs (Render dashboard → each service's page)
+API=https://aviation-api-<suffix>.onrender.com
+PRODUCER=https://aviation-producer-<suffix>.onrender.com
+WORKER=https://aviation-worker-<suffix>.onrender.com
+
 curl $API/health
-curl https://aviation-producer.onrender.com/health
-curl https://aviation-worker.onrender.com/health          # {"status":"ok","rabbitmq":true}
+curl $PRODUCER/health
+curl $WORKER/health                                        # {"status":"ok","rabbitmq":true}
 curl $API/health/all                                       # {"status":"ok","services":{"api":…,"producer":…,"worker":…}}
 curl -i -H "Origin: https://sathishkottravel.github.io" $API/health   # access-control-allow-origin: https://sathishkottravel.github.io
-curl https://aviation-producer.onrender.com/ingestion/live/status/%2A   # 401 without the producer token
-curl -H "Authorization: Bearer $PRODUCER_TOKEN" https://aviation-producer.onrender.com/ingestion/live/aircraft
+curl $PRODUCER/ingestion/live/status/%2A                  # 401 without the producer token
+curl -H "Authorization: Bearer $PRODUCER_TOKEN" $PRODUCER/ingestion/live/aircraft
 E2E_API_URL=$API E2E_API_TOKEN=... uv run pytest -m e2e
 ```

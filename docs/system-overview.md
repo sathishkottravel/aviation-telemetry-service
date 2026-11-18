@@ -6,7 +6,7 @@
 A flight-tracking demo: live aircraft positions on a map, plus stored history for playback.
 
 ## Frontend
-A map UI on GitHub Pages, using Apollo Client over GraphQL (HTTPS for queries, WebSocket for live updates).
+A map UI ([cesium3d-geovis](https://github.com/sathishkottravel/cesium3d-geovis#cesium3d-geovis)) on GitHub Pages, using Apollo Client over GraphQL (HTTPS for queries, WebSocket for live updates).
 Its origin (`https://sathishkottravel.github.io`) is allowed by CORS (`CORS_ORIGINS`) on all three services.
 
 ## Services
