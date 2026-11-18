@@ -15,6 +15,10 @@ MAX_BACKOFF_S = 120.0
 class AdsbRateLimitedError(Exception):
     """ADSB.lol answered 429; requests are paused until the back-off expires."""
 
+    def __init__(self, retry_after_s: float) -> None:
+        super().__init__(f"ADSB.lol rate limited; resuming in {retry_after_s:.0f}s")
+        self.retry_after_s = retry_after_s
+
 
 @dataclass(frozen=True)
 class AdsbSnapshot:
@@ -34,15 +38,20 @@ class AdsbLolClient:
     async def fetch_area(self, lat: float, lon: float, radius_nm: float) -> AdsbSnapshot:
         now = time.monotonic()
         if now < self._paused_until:
-            raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {self._paused_until - now:.0f}s")
+            raise AdsbRateLimitedError(self._paused_until - now)
 
         response = await self._http.get(f"/v2/point/{lat}/{lon}/{radius_nm:g}")
         if response.status_code == httpx.codes.TOO_MANY_REQUESTS:
             self._backoff_s = min(max(self._backoff_s * 2, MIN_BACKOFF_S), MAX_BACKOFF_S)
             pause = _retry_after_s(response) or self._backoff_s
             self._paused_until = time.monotonic() + pause
-            logger.warning("ADSB.lol rate limited (429); pausing requests for %.0fs", pause)
-            raise AdsbRateLimitedError(f"ADSB.lol rate limited; resuming in {pause:.0f}s")
+            logger.warning(
+                "ADSB.lol rate limited (429); pausing requests for %.0fs (Retry-After=%s, body=%r)",
+                pause,
+                response.headers.get("Retry-After"),
+                response.text[:200],
+            )
+            raise AdsbRateLimitedError(pause)
         response.raise_for_status()
         self._backoff_s = 0.0
 
